@@ -1,0 +1,15 @@
+[Unit]
+Description=养崽日记原型 HTTP %i
+After=network.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 /opt/gamebaby/current/deploy/serve.py --port %i --directory /opt/gamebaby/current/dist
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
