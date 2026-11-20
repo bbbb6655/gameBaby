@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { createClient } from 'redis'
 import { DEMO_SMS_CODE } from '../src/registration.js'
 import { db, rows } from './db.js'
-import { accountRoutes } from './account-management.js'
+import { accountRoutes, managedAccount } from './account-management.js'
 import {
   actorById,
   enrollmentOptions,
@@ -89,13 +89,34 @@ app.post('/api/auth/logout', async (req, res) => {
   await sessions.end(req, res)
   res.json({ ok: true })
 })
-async function sessionActor(req) {
-  const session = await sessions.current(req)
+async function verifiedActor(session) {
   const actor = session ? await actorById(session.id) : null
   return actor && sessionMatchesPassword(session, actor.password_hash) ? actor : null
 }
+async function sessionActor(req) {
+  const session = await sessions.current(req)
+  req.session = session
+  if (!session?.ownerToken) return verifiedActor(session)
+  const [actor, owner] = await Promise.all([
+    verifiedActor(session),
+    sessions.owner(session).then(verifiedActor),
+  ])
+  req.canRestoreAccount = Boolean(owner)
+  if (!actor || !owner || !(await managedAccount(owner, actor.id))) return null
+  return { ...actor, impersonating: true }
+}
 app.get('/api/session', async (req, res) => {
-  res.json(publicActor(await sessionActor(req)))
+  const actor = await sessionActor(req)
+  res.json(actor ? publicActor(actor) : req.canRestoreAccount ? { canRestoreAccount: true } : null)
+})
+
+app.post('/api/auth/restore-account', async (req, res) => {
+  const session = await sessions.current(req)
+  const owner = await verifiedActor(await sessions.owner(session))
+  if (!owner) fail(401, '原账号会话已失效，请重新登录')
+  await sessions.restore(req, res, session)
+  console.info('账号切换结束', { operatorId: owner.id, accountId: session.id })
+  res.json(publicActor(owner))
 })
 
 app.use('/api', async (req, res, next) => {
@@ -103,9 +124,20 @@ app.use('/api', async (req, res, next) => {
   if (!req.actor) fail(401, '请先登录')
   next()
 })
+app.post('/api/admin/accounts/:userId/impersonate', async (req, res) => {
+  if (req.actor.impersonating) fail(409, '请先返回原账号')
+  const managed = await managedAccount(req.actor, req.params.userId)
+  if (!managed) fail(404, '账号不在管理范围内')
+  const target = await actorById(managed.id)
+  if (!target) fail(404, '账号不存在')
+  await sessions.impersonate(req, res, target.id, target.password_hash)
+  console.info('账号切换开始', { operatorId: req.actor.id, accountId: target.id })
+  res.json(publicActor({ ...target, impersonating: true }))
+})
 app.patch('/api/my/profile', async (req, res) => {
   await rows('UPDATE users SET nickname=? WHERE id=?', [text(req.body.nickname, '昵称', 80), req.actor.id])
-  res.json(publicActor(await actorById(req.actor.id)))
+  const actor = await actorById(req.actor.id)
+  res.json(publicActor({ ...actor, impersonating: req.actor.impersonating }))
 })
 app.patch('/api/my/password', async (req, res) => {
   const previous = req.actor.password_hash
@@ -117,7 +149,7 @@ app.patch('/api/my/password', async (req, res) => {
     previous,
   ])
   if (!updated.affectedRows) fail(409, '密码已变化，请重新登录')
-  await sessions.start(req, res, req.actor.id, passwordHash)
+  await sessions.start(req, res, req.actor.id, passwordHash, req.session.ownerToken)
   res.json({ ok: true })
 })
 app.use('/api', accountRoutes, enrollmentRoutes(cipher), studyRoutes, await fileRoutes())

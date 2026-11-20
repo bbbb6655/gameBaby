@@ -1,9 +1,11 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import Icon from './Icon.vue'
+import AdminSearch from './AdminSearch.vue'
 import { api } from './api.js'
 
 const { actor } = defineProps({ actor: { type: Object, required: true } })
+const emit = defineEmits(['account-switched'])
 const system = computed(() => actor.role === 'system_admin')
 const schoolAdmin = computed(() => actor.role === 'school_admin')
 const managesSchool = computed(() => system.value || schoolAdmin.value)
@@ -34,10 +36,26 @@ const currentSchool = computed(() => structure.value.schools.find((item) => item
 const applicants = ref([])
 const roster = ref({ users: [], canSeeRealName: false })
 const accounts = ref([])
-const accountSearch = ref('')
-const accountQuery = ref('')
+const searchText = ref('')
+const searchQuery = ref('')
+const searchPlaceholders = {
+  setup: '学校、专业、届别或班级',
+  school: '手机号或昵称',
+  class: '手机号或昵称',
+  roster: '手机号或昵称',
+  accounts: '手机号或昵称',
+  files: '资源名称',
+}
 const nextAccount = ref(null)
-const accountRoles = { school_admin: '学校管理员', class_admin: '教师', student: '学生' }
+const accountRoles = {
+  system_admin: '系统管理员',
+  school_admin: '学校管理员',
+  class_admin: '教师',
+  student: '学生',
+}
+const assignableRoles = computed(() =>
+  system.value ? Object.keys(accountRoles) : ['class_admin', 'student'],
+)
 const newOnly = ref(false)
 const files = ref([])
 const upload = ref(null)
@@ -50,6 +68,14 @@ const batchText = ref('')
 const provisioned = ref([])
 const title = computed(() => tabs.value.find(([id]) => id === page.value)?.[1])
 const classLabel = (item) => `${item.major} · ${item.cohort} · ${item.name}`
+const matchesSearch = (value) => value.toLocaleLowerCase().includes(searchQuery.value.toLocaleLowerCase())
+const visibleSchools = computed(() => structure.value.schools.filter((item) => matchesSearch(item.name)))
+const visibleMajors = computed(() => majors.value.filter((item) => matchesSearch(item.name)))
+const visibleClasses = computed(() => classes.value.filter((item) => matchesSearch(classLabel(item))))
+const visibleFiles = computed(() => files.value.filter((item) => matchesSearch(item.name)))
+const roleClasses = computed(() =>
+  structure.value.classes.filter((item) => item.schoolId === form.value.schoolId),
+)
 
 async function refreshStructure() {
   structure.value = await api('/admin/structure')
@@ -58,15 +84,26 @@ async function refreshStructure() {
   if (!classes.value.some((item) => item.id === classId.value)) classId.value = classes.value[0]?.id || ''
 }
 async function refreshPage() {
-  if (page.value === 'school') applicants.value = await api('/admin/school-applications')
-  else if (page.value === 'roster' || page.value === 'class') {
+  const keyword = searchQuery.value
+  if (page.value === 'school') {
+    const result = await api(`/admin/school-applications?${new URLSearchParams({ q: keyword })}`)
+    if (page.value === 'school' && keyword === searchQuery.value) applicants.value = result
+  } else if (page.value === 'roster' || page.value === 'class') {
     const selected = { page: page.value, id: classId.value, newOnly: newOnly.value }
     if (roster.value.classInfo?.id !== selected.id) roster.value = { users: [], canSeeRealName: false }
     if (!selected.id) return
-    const result = await api(
-      `/admin/classes/${selected.id}/roster?status=${selected.page === 'class' ? 'pending' : 'approved'}${selected.newOnly && selected.page === 'roster' ? '&newOnly=1' : ''}`,
+    const params = new URLSearchParams({
+      q: keyword,
+      status: selected.page === 'class' ? 'pending' : 'approved',
+    })
+    if (selected.newOnly && selected.page === 'roster') params.set('newOnly', '1')
+    const result = await api(`/admin/classes/${selected.id}/roster?${params}`)
+    if (
+      page.value === selected.page &&
+      classId.value === selected.id &&
+      newOnly.value === selected.newOnly &&
+      keyword === searchQuery.value
     )
-    if (page.value === selected.page && classId.value === selected.id && newOnly.value === selected.newOnly)
       roster.value = result
   } else if (page.value === 'accounts') await loadAccounts()
   else if (page.value === 'files') files.value = await api('/materials')
@@ -91,6 +128,10 @@ onMounted(() =>
 )
 watch(schoolId, () => {
   classId.value = classes.value[0]?.id || ''
+})
+watch(page, () => {
+  searchText.value = ''
+  searchQuery.value = ''
 })
 watch([page, classId, newOnly], () => {
   roster.value = { users: [], canSeeRealName: false }
@@ -140,21 +181,43 @@ function saveAdmin() {
   })
 }
 async function loadAccounts(after = null) {
-  const keyword = accountQuery.value
+  const keyword = searchQuery.value
   const params = new URLSearchParams({ q: keyword })
   if (after) params.set('after', after)
   const result = await api(`/admin/accounts?${params}`)
-  if (page.value !== 'accounts' || keyword !== accountQuery.value) return
+  if (page.value !== 'accounts' || keyword !== searchQuery.value) return
   accounts.value = after ? [...accounts.value, ...result.accounts] : result.accounts
   nextAccount.value = result.next
 }
-function searchAccounts() {
-  accountQuery.value = accountSearch.value.trim()
-  return run(loadAccounts)
+function searchPage() {
+  searchQuery.value = searchText.value.trim()
+  return run(refreshPage)
 }
 function openAccount(kind, account) {
   show(kind)
-  form.value = { id: account.id, nickname: account.nickname, phone: account.phone }
+  form.value = {
+    id: account.id,
+    nickname: account.nickname,
+    phone: account.phone,
+    role: account.role,
+    schoolId: account.schoolId || (system.value ? '' : actor.schoolId),
+    classIds: [...(account.classIds || [])],
+  }
+}
+function saveAccountRole() {
+  return run(async () => {
+    const { id, role, schoolId, classIds } = form.value
+    await api(`/admin/accounts/${id}/role`, { method: 'PATCH', body: { role, schoolId, classIds } })
+    modal.value = ''
+    await loadAccounts()
+    message.value = '账号权限已修改'
+  })
+}
+function signInAs(account) {
+  return run(async () => {
+    const target = await api(`/admin/accounts/${account.id}/impersonate`, { method: 'POST' })
+    emit('account-switched', target)
+  })
 }
 function saveAccountPhone() {
   return run(async () => {
@@ -289,6 +352,13 @@ function uploadMaterial() {
       </header>
       <p v-if="error && !modal" class="note warn" role="alert">{{ error }}</p>
       <p v-if="message && !modal" class="note" role="status">{{ message }}</p>
+      <AdminSearch
+        v-if="searchPlaceholders[page]"
+        v-model="searchText"
+        :placeholder="searchPlaceholders[page]"
+        :disabled="busy"
+        @search="searchPage"
+      />
 
       <template v-if="page === 'setup'">
         <section class="paper panel stack">
@@ -299,8 +369,10 @@ function uploadMaterial() {
             </button>
           </div>
           <div class="row wrap">
-            <span v-for="item in structure.schools" :key="item.id" class="tag">{{ item.name }}</span>
-            <p v-if="!structure.schools.length" class="empty">请先创建学校。</p>
+            <span v-for="item in visibleSchools" :key="item.id" class="tag">{{ item.name }}</span>
+            <p v-if="!visibleSchools.length" class="empty">
+              {{ searchQuery ? '暂无符合条件的学校。' : '请先创建学校。' }}
+            </p>
           </div>
         </section>
         <section v-if="currentSchool" class="paper panel stack">
@@ -312,10 +384,10 @@ function uploadMaterial() {
             </div>
           </div>
           <div class="row wrap">
-            <span v-for="item in majors" :key="item.id" class="tag">{{ item.name }}</span>
+            <span v-for="item in visibleMajors" :key="item.id" class="tag">{{ item.name }}</span>
             <p v-if="!majors.length" class="muted">尚未设置专业。</p>
           </div>
-          <div v-for="item in classes" :key="item.id" class="manageable">
+          <div v-for="item in visibleClasses" :key="item.id" class="manageable">
             <span>{{ classLabel(item) }}</span
             ><span class="tag">{{ currentSchool.name }}</span>
           </div>
@@ -406,13 +478,6 @@ function uploadMaterial() {
       </section>
 
       <section v-else-if="page === 'accounts'" class="paper panel stack">
-        <form class="row wrap" @submit.prevent="searchAccounts">
-          <label class="search">
-            <Icon name="Search" :size="17" />
-            <input v-model="accountSearch" aria-label="搜索账号" placeholder="手机号或昵称" />
-          </label>
-          <button class="secondary" :disabled="busy">搜索</button>
-        </form>
         <div class="table-scroll">
           <table>
             <thead>
@@ -445,6 +510,22 @@ function uploadMaterial() {
                       @click="openAccount('account-password', account)"
                     >
                       重置密码
+                    </button>
+                    <button
+                      v-if="managesSchool"
+                      class="ghost"
+                      :disabled="busy"
+                      @click="openAccount('account-role', account)"
+                    >
+                      修改权限
+                    </button>
+                    <button
+                      v-if="!actor.impersonating"
+                      class="secondary"
+                      :disabled="busy"
+                      @click="signInAs(account)"
+                    >
+                      登录此账户
                     </button>
                   </div>
                 </td>
@@ -482,11 +563,13 @@ function uploadMaterial() {
           <h2>已发布资源</h2>
           <button class="primary" @click="show('file')"><Icon name="Plus" :size="16" /> 上传文件</button>
         </div>
-        <div v-for="item in files" :key="item.id" class="manageable">
+        <div v-for="item in visibleFiles" :key="item.id" class="manageable">
           <span>{{ item.name }}</span
           ><a class="secondary" :href="`/api/files/${item.id}`"><Icon name="Download" :size="16" /> 下载</a>
         </div>
-        <p v-if="!files.length" class="empty">暂无教材或资源。</p>
+        <p v-if="!visibleFiles.length" class="empty">
+          {{ searchQuery ? '暂无符合条件的资源。' : '暂无教材或资源。' }}
+        </p>
       </section>
     </main>
   </div>
@@ -504,6 +587,7 @@ function uploadMaterial() {
                 admin: system ? '设置管理员' : '设置教师',
                 'account-phone': '修改手机号',
                 'account-password': '重置密码',
+                'account-role': '修改权限',
                 students: '批量录入学生',
                 result: '录入结果',
                 file: '上传教材或资源',
@@ -574,6 +658,40 @@ function uploadMaterial() {
           <p class="muted small">重置后，该账号需用新生成的临时密码重新登录。</p>
           <button class="primary" :disabled="busy" @click="resetAccountPassword">生成临时密码</button>
         </div>
+        <form v-else-if="modal === 'account-role'" class="stack" @submit.prevent="saveAccountRole">
+          <p>{{ form.nickname }} · {{ form.phone }}</p>
+          <label class="field"
+            >角色<select v-model="form.role" aria-label="角色" required>
+              <option v-for="role in assignableRoles" :key="role" :value="role">
+                {{ accountRoles[role] }}
+              </option>
+            </select></label
+          >
+          <label v-if="system && ['school_admin', 'class_admin'].includes(form.role)" class="field"
+            >所属学校
+            <select v-model="form.schoolId" aria-label="所属学校" required @change="form.classIds = []">
+              <option value="">请选择学校</option>
+              <option v-for="school in structure.schools" :key="school.id" :value="school.id">
+                {{ school.name }}
+              </option>
+            </select>
+          </label>
+          <div v-if="form.role === 'class_admin'" class="stack">
+            <strong>负责班级</strong>
+            <label v-for="item in roleClasses" :key="item.id" class="row"
+              ><input v-model="form.classIds" type="checkbox" :value="item.id" />{{
+                classLabel(item)
+              }}</label
+            >
+            <p v-if="!roleClasses.length" class="muted small">暂无可分配的班级。</p>
+          </div>
+          <button
+            class="primary"
+            :disabled="busy || (form.role === 'class_admin' && !form.classIds.length)"
+          >
+            保存权限
+          </button>
+        </form>
         <form v-else-if="modal === 'students'" class="stack" @submit.prevent="addStudents">
           <label class="field"
             >每行一位学生，可粘贴表格三列<textarea

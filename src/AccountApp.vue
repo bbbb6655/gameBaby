@@ -9,6 +9,7 @@ import { api } from './api.js'
 
 const props = defineProps({ mode: { type: String, required: true } })
 const actor = ref(null)
+const canRestoreAccount = ref(false)
 const loading = ref(true)
 const busy = ref(false)
 const error = ref('')
@@ -56,7 +57,9 @@ function changeActor(next) {
 }
 
 async function refresh() {
-  changeActor(await api('/session'))
+  const next = await api('/session')
+  canRestoreAccount.value = Boolean(next?.canRestoreAccount)
+  changeActor(canRestoreAccount.value ? null : next)
   if (!actor.value) return
   if (needsPlacement.value) await loadEnrollmentOptions()
   if (actor.value.canStudy && !study.value) study.value = await api('/my/study-state')
@@ -120,16 +123,34 @@ function toggleRegistration() {
   error.value = ''
   if (registration.value) return request(loadEnrollmentOptions)
 }
+function clearAccountView() {
+  study.value = null
+  studyMode.value = false
+  teachingDemo.value = false
+  profile.value = false
+  profileResources.value = []
+  avatar.value = null
+  password.value = { currentPassword: '', newPassword: '' }
+  registration.value = false
+  placement.value = emptyPlacement()
+  canRestoreAccount.value = false
+}
+async function loadSwitchedAccount(next) {
+  clearAccountView()
+  changeActor(next)
+  await refresh()
+}
+function switchAccount(next) {
+  return request(() => loadSwitchedAccount(next))
+}
+function restoreAccount() {
+  return request(async () => loadSwitchedAccount(await api('/auth/restore-account', { method: 'POST' })))
+}
 async function signOut() {
   await request(async () => {
     await api('/auth/logout', { method: 'POST' })
     changeActor(null)
-    study.value = null
-    studyMode.value = false
-    teachingDemo.value = false
-    profile.value = false
-    registration.value = false
-    placement.value = emptyPlacement()
+    clearAccountView()
   })
 }
 function applyClass() {
@@ -262,6 +283,15 @@ function changePassword() {
         <button class="ghost" type="button" :disabled="busy" @click="toggleRegistration">
           {{ registration ? '已有账号，去登录' : '没有账号，去注册' }}
         </button>
+        <button
+          v-if="canRestoreAccount"
+          class="secondary"
+          type="button"
+          :disabled="busy"
+          @click="restoreAccount"
+        >
+          返回原账号
+        </button>
       </form>
     </main>
   </div>
@@ -274,6 +304,9 @@ function changePassword() {
         ><span class="muted small">{{ actor.schoolName }}</span>
       </div>
       <div class="row wrap">
+        <button v-if="actor.impersonating" class="secondary" :disabled="busy" @click="restoreAccount">
+          返回原账号
+        </button>
         <button
           v-if="actor.canStudy && actor.canManage && mode === 'desktop' && !teachingDemo"
           class="ghost"
@@ -351,7 +384,12 @@ function changePassword() {
       "
       :demo-account="actor.id"
     />
-    <AdminPortal v-else-if="actor.canManage && mode === 'desktop' && !studyMode" :actor="actor" />
+    <AdminPortal
+      v-else-if="actor.canManage && mode === 'desktop' && !studyMode"
+      :key="actor.id"
+      :actor="actor"
+      @account-switched="switchAccount"
+    />
     <template v-else-if="actor.canStudy && study">
       <Mobile v-if="mode === 'mobile'" :key="actor.id + ':' + actor.nickname" :account-state="study" />
       <Desktop v-else :key="actor.id + ':' + actor.nickname" :account-state="study" />

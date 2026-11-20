@@ -87,23 +87,48 @@ export function sessionMatchesPassword(session, passwordHash) {
 }
 
 export function sessionService(redis) {
+  async function read(token) {
+    const stored = token ? await redis.get(redisKey(token)) : null
+    if (!stored) return null
+    const [id, tag, ownerToken] = stored.split(':')
+    return { id, tag, ownerToken }
+  }
+
+  function setCookie(req, res, token) {
+    res.cookie(cookieName, token, { ...cookieOptions(req), maxAge: sessionAge * 1000 })
+  }
+
   return {
     async current(req) {
-      const token = cookieValue(req)
-      const stored = token ? await redis.get(redisKey(token)) : null
-      if (!stored) return null
-      const [id, tag] = stored.split(':')
-      return { id, tag }
+      return read(cookieValue(req))
     },
-    async start(req, res, id, passwordHash) {
-      await this.end(req, res)
+    async owner(session) {
+      return read(session?.ownerToken)
+    },
+    async start(req, res, id, passwordHash, ownerToken) {
+      const previous = cookieValue(req)
+      if (ownerToken) {
+        if (previous && previous !== ownerToken) await redis.del(redisKey(previous))
+      } else await this.end(req, res)
       const token = randomBytes(32).toString('hex')
-      await redis.set(redisKey(token), `${id}:${credentialTag(passwordHash)}`, { EX: sessionAge })
-      res.cookie(cookieName, token, { ...cookieOptions(req), maxAge: sessionAge * 1000 })
+      const value = `${id}:${credentialTag(passwordHash)}${ownerToken ? `:${ownerToken}` : ''}`
+      await redis.set(redisKey(token), value, { EX: sessionAge })
+      setCookie(req, res, token)
+    },
+    async impersonate(req, res, id, passwordHash) {
+      await this.start(req, res, id, passwordHash, cookieValue(req))
+    },
+    async restore(req, res, session) {
+      await redis.del(redisKey(cookieValue(req)))
+      setCookie(req, res, session.ownerToken)
     },
     async end(req, res) {
       const token = cookieValue(req)
-      if (token) await redis.del(redisKey(token))
+      if (token) {
+        const session = await read(token)
+        await redis.del(redisKey(token))
+        if (session?.ownerToken) await redis.del(redisKey(session.ownerToken))
+      }
       res.clearCookie(cookieName, cookieOptions(req))
     },
   }

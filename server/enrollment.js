@@ -73,6 +73,7 @@ export function publicActor(actor) {
     adminClasses,
     canStudy: isApprovedStudent(actor),
     canManage: isAdmin(actor),
+    impersonating: Boolean(actor.impersonating),
   }
 }
 
@@ -231,7 +232,8 @@ export function enrollmentRoutes(cipher) {
         connection,
       )
     })
-    res.json(publicActor(await actorById(req.actor.id)))
+    const actor = await actorById(req.actor.id)
+    res.json(publicActor({ ...actor, impersonating: req.actor.impersonating }))
   })
 
   router.get('/my/classes', async (req, res) => {
@@ -272,7 +274,8 @@ export function enrollmentRoutes(cipher) {
         connection,
       )
     })
-    res.json(publicActor(await actorById(req.actor.id)))
+    const actor = await actorById(req.actor.id)
+    res.json(publicActor({ ...actor, impersonating: req.actor.impersonating }))
   })
 
   router.use('/admin', (req, res, next) => {
@@ -334,10 +337,12 @@ export function enrollmentRoutes(cipher) {
 
   router.get('/admin/school-applications', async (req, res) => {
     if (!isSchool(req.actor, req.actor.school_id)) fail(403, '入校申请由学校管理员审核')
+    const keyword = typeof req.query.q === 'string' ? req.query.q.trim() : ''
     res.json(
       await rows(
-        `SELECT id,phone,nickname FROM users WHERE school_id=? AND school_status='pending' ORDER BY id`,
-        [req.actor.school_id],
+        `SELECT id,phone,nickname FROM users WHERE school_id=? AND school_status='pending'
+        AND (LOCATE(?,phone)>0 OR LOCATE(?,nickname)>0) ORDER BY id`,
+        [req.actor.school_id, keyword, keyword],
       ),
     )
   })
@@ -369,14 +374,16 @@ export function enrollmentRoutes(cipher) {
     const details = await selectClass(req.params.classId)
     if (!classAccess(req.actor, details)) fail(403, '不能管理该班')
     const status = req.query.status || 'approved'
+    const keyword = typeof req.query.q === 'string' ? req.query.q.trim() : ''
     if (!['approved', 'pending', 'rejected'].includes(status)) fail(400, '申请状态无效')
     const filter = req.query.newOnly === '1' ? " AND cm.origin='precreated'" : ''
     const list = await rows(
       `SELECT u.id,u.phone,u.nickname,u.real_name_cipher AS realNameCipher,cm.origin,cm.requested_at AS requestedAt
       FROM class_members cm JOIN users u ON u.id=cm.user_id
       WHERE cm.class_id=? AND cm.status=? AND u.school_id=? AND u.school_status='approved'${filter}
+      AND (LOCATE(?,u.phone)>0 OR LOCATE(?,u.nickname)>0)
       ORDER BY cm.requested_at DESC,u.id`,
-      [details.id, status, details.schoolId],
+      [details.id, status, details.schoolId, keyword, keyword],
     )
     res.json({
       classInfo: details,

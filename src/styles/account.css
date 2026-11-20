@@ -141,6 +141,9 @@
 .admin-main .paper {
   min-width: 0;
 }
+.admin-search .search input {
+  width: min(52vw, 178px);
+}
 .admin-heading {
   display: flex;
   align-items: end;

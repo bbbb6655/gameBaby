@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import Icon from './Icon.vue'
+import AdminSearch from './AdminSearch.vue'
 import StateCards from './StateCards.vue'
 import Timeline from './Timeline.vue'
 import Trend from './Trend.vue'
@@ -76,10 +77,12 @@ watch(role, (value) => {
 watch(schoolId, () => {
   classFilter.value = '全部班级'
   search.value = ''
+  searchText.value = ''
   detail.value = null
 })
 watch(page, () => {
   search.value = ''
+  searchText.value = ''
   detail.value = null
 })
 const act = (type, fields = {}, tenant = schoolId.value) => dispatch({ type, school: tenant, ...fields })
@@ -109,6 +112,7 @@ function enterSchool(id) {
   role.value = 'school'
 }
 const search = ref('')
+const searchText = ref('')
 const detail = ref(null)
 const rows = computed(() => {
   const current = school.value
@@ -548,14 +552,13 @@ function exportCsv() {
 
         <template v-else-if="page === 'students'">
           <section class="paper panel">
-            <div class="section-title">
+            <div class="section-title wrap">
               <h2>学生清单</h2>
-              <label class="search"
-                ><Icon name="Search" :size="17" /><input
-                  v-model="search"
-                  placeholder="姓名、学号或预警"
-                  aria-label="搜索学生"
-              /></label>
+              <AdminSearch
+                v-model="searchText"
+                placeholder="姓名、学号或预警"
+                @search="search = searchText.trim()"
+              />
             </div>
             <div class="table-scroll">
               <table>
