@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { DEMO_SMS_CODE } from '../src/registration.js'
 import { rows, transaction } from './db.js'
 import { fail, hashPassword, phoneNumber, temporaryPassword, text } from './security.js'
 
@@ -22,7 +23,7 @@ const classAccess = (actor, details) =>
 
 export async function actorById(id) {
   const [actor] = await rows(
-    `SELECT u.id, u.phone, u.nickname, u.role, u.school_id, u.school_status, u.avatar_id,
+    `SELECT u.id, u.phone, u.nickname, u.role, u.school_id, u.school_status, u.avatar_id, u.password_hash,
     s.name AS schoolName FROM users u LEFT JOIN schools s ON s.id=u.school_id WHERE u.id=?`,
     [id],
   )
@@ -94,6 +95,38 @@ async function selectClass(classId) {
   )
   if (!item) fail(404, '班级不存在')
   return item
+}
+
+async function selectedPlacement({ schoolId, majorId, cohort, classId }) {
+  const school = asId(schoolId)
+  const major = asId(majorId)
+  const details = await selectClass(classId)
+  if (details.schoolId !== school || details.majorId !== major || details.cohort !== cohort)
+    fail(400, '所选学校、专业、届别和班级不匹配')
+  return details
+}
+
+export async function registerStudent(body, cipher) {
+  if (body?.smsCode !== DEMO_SMS_CODE) fail(400, '短信验证码错误')
+  const details = await selectedPlacement(body)
+  const phone = phoneNumber(body.phone)
+  const nickname = text(body.nickname, '昵称', 80)
+  const realName = cipher.encrypt(text(body.realName, '实名', 80))
+  const passwordHash = await hashPassword(body.password)
+  return transaction(async (connection) => {
+    const { insertId } = await rows(
+      `INSERT INTO users (phone,nickname,real_name_cipher,password_hash,school_id,school_status)
+      VALUES (?,?,?,?,?,'pending')`,
+      [phone, nickname, realName, passwordHash, details.schoolId],
+      connection,
+    )
+    await rows(
+      `INSERT INTO class_members (class_id,user_id,status,origin) VALUES (?,?,'pending','application')`,
+      [details.id, insertId],
+      connection,
+    )
+    return insertId
+  })
 }
 
 async function selectSchool(schoolId) {
@@ -175,6 +208,10 @@ async function upsertForSchool(connection, item, schoolId, nextRole, cipher) {
 const classListQuery = `SELECT c.id,c.name,c.cohort,c.school_id AS schoolId,c.major_id AS majorId,s.name AS school,m.name AS major
   FROM classes c JOIN schools s ON s.id=c.school_id JOIN majors m ON m.id=c.major_id`
 
+export function enrollmentOptions() {
+  return rows(`${classListQuery} ORDER BY s.name,m.name,c.cohort,c.name,c.id`)
+}
+
 export function enrollmentRoutes(cipher) {
   const router = Router()
 
@@ -207,12 +244,20 @@ export function enrollmentRoutes(cipher) {
   })
 
   router.post('/my/classes', async (req, res) => {
-    const details = await selectClass(req.body.classId)
-    ownSchool(req.actor, details.schoolId)
+    const details = req.body.schoolId
+      ? await selectedPlacement(req.body)
+      : await selectClass(req.body.classId)
     await transaction(async (connection) => {
       const user = await takeUser(connection, req.actor.id)
-      if (user.school_status !== 'approved' || user.school_id !== details.schoolId)
-        fail(403, '请先通过该学校的入校审核')
+      if (['pending', 'approved'].includes(user.school_status)) {
+        if (user.school_id !== details.schoolId) fail(409, '账号已选定其他学校')
+      } else {
+        await rows(
+          "UPDATE users SET school_id=?,school_status='pending' WHERE id=?",
+          [details.schoolId, user.id],
+          connection,
+        )
+      }
       const [current] = await rows(
         'SELECT status FROM class_members WHERE class_id=? AND user_id=? FOR UPDATE',
         [details.id, user.id],
@@ -306,6 +351,15 @@ export function enrollmentRoutes(cipher) {
       if (user.school_id !== actor.school_id) fail(404, '申请不存在')
       if (user.school_status !== 'pending') fail(409, '该申请已处理')
       await rows('UPDATE users SET school_status=? WHERE id=?', [decision, user.id], connection)
+      if (decision === 'rejected') {
+        await rows(
+          `UPDATE class_members cm JOIN classes c ON c.id=cm.class_id
+          SET cm.status='rejected',cm.reviewed_at=CURRENT_TIMESTAMP
+          WHERE cm.user_id=? AND c.school_id=? AND cm.status='pending'`,
+          [user.id, user.school_id],
+          connection,
+        )
+      }
       await auditReview(connection, user.id, actor, user.school_id, null, decision)
     })
     res.json({ ok: true })
@@ -319,8 +373,10 @@ export function enrollmentRoutes(cipher) {
     const filter = req.query.newOnly === '1' ? " AND cm.origin='precreated'" : ''
     const list = await rows(
       `SELECT u.id,u.phone,u.nickname,u.real_name_cipher AS realNameCipher,cm.origin,cm.requested_at AS requestedAt
-      FROM class_members cm JOIN users u ON u.id=cm.user_id WHERE cm.class_id=? AND cm.status=?${filter} ORDER BY cm.requested_at DESC,u.id`,
-      [details.id, status],
+      FROM class_members cm JOIN users u ON u.id=cm.user_id
+      WHERE cm.class_id=? AND cm.status=? AND u.school_id=? AND u.school_status='approved'${filter}
+      ORDER BY cm.requested_at DESC,u.id`,
+      [details.id, status, details.schoolId],
     )
     res.json({
       classInfo: details,
@@ -361,7 +417,7 @@ export function enrollmentRoutes(cipher) {
       if (role === 'school_admin') school = await selectSchool(schoolId)
     } else if (role === 'class_admin') {
       details = await selectClass(classId)
-      if (!isSchool(actor, details.schoolId)) fail(403, '班级管理员由学校管理员设置')
+      if (!isSchool(actor, details.schoolId)) fail(403, '教师由学校管理员设置')
       school = { id: details.schoolId }
     } else fail(400, '请选择管理员类型')
     const result = await transaction(async (connection) => {

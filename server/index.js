@@ -3,7 +3,14 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createClient } from 'redis'
 import { db, rows } from './db.js'
-import { actorById, enrollmentRoutes, publicActor } from './enrollment.js'
+import { accountRoutes } from './account-management.js'
+import {
+  actorById,
+  enrollmentOptions,
+  enrollmentRoutes,
+  publicActor,
+  registerStudent,
+} from './enrollment.js'
 import { fileRoutes } from './files.js'
 import { studyRoutes } from './study.js'
 import {
@@ -12,6 +19,7 @@ import {
   matchPassword,
   phoneNumber,
   profileCipher,
+  sessionMatchesPassword,
   sessionService,
   text,
   validPassword,
@@ -48,17 +56,13 @@ app.get('/api/health', async (req, res) => {
   res.json({ ok: true })
 })
 
+app.get('/api/enrollment-options', async (req, res) => res.json(await enrollmentOptions()))
+
 app.post('/api/auth/register', async (req, res) => {
-  const phone = phoneNumber(req.body.phone)
-  const nickname = text(req.body.nickname, '昵称', 80)
-  const realName = text(req.body.realName, '实名', 80)
-  const passwordHash = await hashPassword(req.body.password)
-  const record = await rows(
-    'INSERT INTO users (phone,nickname,real_name_cipher,password_hash) VALUES (?,?,?,?)',
-    [phone, nickname, cipher.encrypt(realName), passwordHash],
-  )
-  await sessions.start(req, res, record.insertId)
-  res.status(201).json(publicActor(await actorById(record.insertId)))
+  const userId = await registerStudent(req.body, cipher)
+  const actor = await actorById(userId)
+  await sessions.start(req, res, actor.id, actor.password_hash)
+  res.status(201).json(publicActor(actor))
 })
 
 app.post('/api/auth/login', async (req, res) => {
@@ -66,7 +70,7 @@ app.post('/api/auth/login', async (req, res) => {
   const password = validPassword(req.body.password)
   const [user] = await rows('SELECT id,password_hash FROM users WHERE phone=?', [phone])
   if (!user || !(await matchPassword(password, user.password_hash))) fail(401, '手机号或密码不正确')
-  await sessions.start(req, res, user.id)
+  await sessions.start(req, res, user.id, user.password_hash)
   res.json(publicActor(await actorById(user.id)))
 })
 
@@ -74,14 +78,17 @@ app.post('/api/auth/logout', async (req, res) => {
   await sessions.end(req, res)
   res.json({ ok: true })
 })
+async function sessionActor(req) {
+  const session = await sessions.current(req)
+  const actor = session ? await actorById(session.id) : null
+  return actor && sessionMatchesPassword(session, actor.password_hash) ? actor : null
+}
 app.get('/api/session', async (req, res) => {
-  const id = await sessions.current(req)
-  res.json(id ? publicActor(await actorById(id)) : null)
+  res.json(publicActor(await sessionActor(req)))
 })
 
 app.use('/api', async (req, res, next) => {
-  const id = await sessions.current(req)
-  req.actor = id ? await actorById(id) : null
+  req.actor = await sessionActor(req)
   if (!req.actor) fail(401, '请先登录')
   next()
 })
@@ -90,16 +97,19 @@ app.patch('/api/my/profile', async (req, res) => {
   res.json(publicActor(await actorById(req.actor.id)))
 })
 app.patch('/api/my/password', async (req, res) => {
-  const [user] = await rows('SELECT password_hash FROM users WHERE id=?', [req.actor.id])
-  if (!(await matchPassword(req.body.currentPassword, user.password_hash))) fail(400, '当前密码不正确')
-  await rows('UPDATE users SET password_hash=? WHERE id=?', [
-    await hashPassword(req.body.newPassword),
+  const previous = req.actor.password_hash
+  if (!(await matchPassword(req.body.currentPassword, previous))) fail(400, '当前密码不正确')
+  const passwordHash = await hashPassword(req.body.newPassword)
+  const updated = await rows('UPDATE users SET password_hash=? WHERE id=? AND password_hash=?', [
+    passwordHash,
     req.actor.id,
+    previous,
   ])
-  await sessions.start(req, res, req.actor.id)
+  if (!updated.affectedRows) fail(409, '密码已变化，请重新登录')
+  await sessions.start(req, res, req.actor.id, passwordHash)
   res.json({ ok: true })
 })
-app.use('/api', enrollmentRoutes(cipher), studyRoutes, await fileRoutes())
+app.use('/api', accountRoutes, enrollmentRoutes(cipher), studyRoutes, await fileRoutes())
 app.use('/api', (req, res) => res.status(404).json({ error: '接口不存在' }))
 
 const publicPorts = (process.env.APP_PUBLIC_PORTS || '').split(',').filter(Boolean).map(Number)

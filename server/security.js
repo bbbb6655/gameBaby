@@ -1,8 +1,16 @@
-import { createCipheriv, createDecipheriv, randomBytes, scrypt, timingSafeEqual } from 'node:crypto'
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+  scrypt,
+  timingSafeEqual,
+} from 'node:crypto'
 import { promisify } from 'node:util'
 
 const derive = promisify(scrypt)
 const sessionAge = 7 * 24 * 60 * 60
+const passwordFormat = 'scrypt$'
 
 export function fail(status, message) {
   const error = new Error(message)
@@ -28,7 +36,7 @@ export function validPassword(value) {
 }
 
 export async function hashPassword(value) {
-  const salt = randomBytes(16).toString('hex')
+  const salt = `${passwordFormat}${randomBytes(16).toString('hex')}`
   const hash = await derive(validPassword(value), salt, 64)
   return `${salt}:${hash.toString('hex')}`
 }
@@ -69,17 +77,28 @@ function cookieValue(req) {
 }
 const redisKey = (value) => `gamebaby:session:${value}`
 const cookieOptions = (req) => ({ httpOnly: true, sameSite: 'lax', secure: req.secure, path: '/' })
+const credentialTag = (passwordHash) => createHash('sha256').update(passwordHash).digest('hex')
+
+export function sessionMatchesPassword(session, passwordHash) {
+  // 旧会话可继续使用，直到这个账号首次更换密码。
+  return session.tag
+    ? session.tag === credentialTag(passwordHash)
+    : !passwordHash.startsWith(passwordFormat)
+}
 
 export function sessionService(redis) {
   return {
     async current(req) {
       const token = cookieValue(req)
-      return token ? await redis.get(redisKey(token)) : null
+      const stored = token ? await redis.get(redisKey(token)) : null
+      if (!stored) return null
+      const [id, tag] = stored.split(':')
+      return { id, tag }
     },
-    async start(req, res, id) {
+    async start(req, res, id, passwordHash) {
       await this.end(req, res)
       const token = randomBytes(32).toString('hex')
-      await redis.set(redisKey(token), String(id), { EX: sessionAge })
+      await redis.set(redisKey(token), `${id}:${credentialTag(passwordHash)}`, { EX: sessionAge })
       res.cookie(cookieName, token, { ...cookieOptions(req), maxAge: sessionAge * 1000 })
     },
     async end(req, res) {

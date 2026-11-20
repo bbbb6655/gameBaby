@@ -4,7 +4,9 @@ import Icon from './Icon.vue'
 import Mobile from './Mobile.vue'
 import Desktop from './Desktop.vue'
 import AdminPortal from './AdminPortal.vue'
+import EnrollmentFields from './EnrollmentFields.vue'
 import { api } from './api.js'
+import { DEMO_SMS_CODE } from './registration.js'
 
 const props = defineProps({ mode: { type: String, required: true } })
 const actor = ref(null)
@@ -14,36 +16,33 @@ const error = ref('')
 const success = ref('')
 const registration = ref(false)
 const form = ref({ phone: '', realName: '', nickname: '', password: '' })
-const schools = ref([])
-const schoolId = ref('')
-const classes = ref([])
-const major = ref('')
-const cohort = ref('')
-const classId = ref('')
+const smsCode = ref('')
+const enrollmentOptions = ref(null)
+const emptyPlacement = () => ({ schoolId: '', majorId: '', cohort: '', classId: '' })
+const placement = ref(emptyPlacement())
 const study = ref(null)
 const studyMode = ref(false)
 const teachingDemo = ref(false)
 const profile = ref(false)
 const nickname = ref('')
+const accountPhone = ref('')
 const avatar = ref(null)
 const password = ref({ currentPassword: '', newPassword: '' })
 const profileResources = ref([])
 
-const majors = computed(() => [...new Set(classes.value.map((item) => item.major))])
-const cohorts = computed(() => [
-  ...new Set(classes.value.filter((item) => item.major === major.value).map((item) => item.cohort)),
-])
-const classChoices = computed(() =>
-  classes.value.filter((item) => item.major === major.value && item.cohort === cohort.value),
-)
-const waitingClass = computed(
-  () => actor.value?.enrollments.filter((item) => item.status === 'pending') || [],
-)
 const blocked = computed(() => actor.value && !actor.value.canManage && !actor.value.canStudy)
-function changeMajor() {
-  cohort.value = ''
-  classId.value = ''
-}
+const needsPlacement = computed(
+  () =>
+    blocked.value &&
+    (['none', 'rejected'].includes(actor.value.schoolStatus) ||
+      !actor.value.enrollments.some((item) => item.status === 'pending')),
+)
+const fixedSchoolId = computed(() =>
+  ['pending', 'approved'].includes(actor.value?.schoolStatus) ? actor.value.schoolId : '',
+)
+const hasPlacementOptions = computed(() =>
+  enrollmentOptions.value?.some((item) => !fixedSchoolId.value || item.schoolId === fixedSchoolId.value),
+)
 
 const desktopHref = computed(() => {
   const url = new URL(location.port === '81' ? '/' : '/desktop.html', location.href)
@@ -59,11 +58,12 @@ function changeActor(next) {
 async function refresh() {
   changeActor(await api('/session'))
   if (!actor.value) return
-  if (['none', 'rejected'].includes(actor.value.schoolStatus) && !actor.value.canManage)
-    schools.value = await api('/schools')
-  if (actor.value.schoolStatus === 'approved' && !actor.value.canStudy && !actor.value.canManage)
-    classes.value = await api('/my/classes')
+  if (needsPlacement.value) await loadEnrollmentOptions()
   if (actor.value.canStudy && !study.value) study.value = await api('/my/study-state')
+}
+
+async function loadEnrollmentOptions() {
+  enrollmentOptions.value = await api('/enrollment-options')
 }
 
 async function request(work) {
@@ -90,12 +90,21 @@ onBeforeUnmount(() => window.removeEventListener('gamebaby-study-error', showStu
 
 async function authenticate() {
   await request(async () => {
-    changeActor(
-      await api(`/auth/${registration.value ? 'register' : 'login'}`, { method: 'POST', body: form.value }),
-    )
+    const body = registration.value
+      ? { ...form.value, ...placement.value, smsCode: smsCode.value }
+      : form.value
+    changeActor(await api(`/auth/${registration.value ? 'register' : 'login'}`, { method: 'POST', body }))
     form.value.password = ''
+    smsCode.value = ''
+    placement.value = emptyPlacement()
     await refresh()
   })
+}
+function toggleRegistration() {
+  registration.value = !registration.value
+  smsCode.value = ''
+  error.value = ''
+  if (registration.value) return request(loadEnrollmentOptions)
 }
 async function signOut() {
   await request(async () => {
@@ -105,18 +114,16 @@ async function signOut() {
     studyMode.value = false
     teachingDemo.value = false
     profile.value = false
-  })
-}
-function applySchool() {
-  return request(async () => {
-    changeActor(await api('/my/school', { method: 'POST', body: { schoolId: schoolId.value } }))
-    success.value = '入校申请已提交'
+    registration.value = false
+    placement.value = emptyPlacement()
   })
 }
 function applyClass() {
   return request(async () => {
-    changeActor(await api('/my/classes', { method: 'POST', body: { classId: classId.value } }))
-    success.value = '入班申请已提交'
+    const body = { ...placement.value, schoolId: fixedSchoolId.value || placement.value.schoolId }
+    changeActor(await api('/my/classes', { method: 'POST', body }))
+    placement.value = emptyPlacement()
+    success.value = '申请已提交'
   })
 }
 function saveNickname() {
@@ -127,11 +134,20 @@ function saveNickname() {
   })
 }
 function openProfile() {
+  accountPhone.value = actor.value.phone
   profile.value = true
   if (!blocked.value)
     request(async () => {
       profileResources.value = await api('/materials')
     })
+}
+function savePhone() {
+  return request(async () => {
+    changeActor(await api('/my/phone', { method: 'PATCH', body: { phone: accountPhone.value } }))
+    accountPhone.value = actor.value.phone
+    form.value.phone = actor.value.phone
+    success.value = '手机号已修改，下次请用新手机号登录'
+  })
 }
 function uploadAvatar() {
   return request(async () => {
@@ -170,10 +186,26 @@ function changePassword() {
           >手机号<input v-model="form.phone" type="tel" autocomplete="username" required
         /></label>
         <template v-if="registration">
+          <label class="field">
+            <span class="row between">
+              短信验证码 <span id="demo-sms-code" class="tag">演示码 {{ DEMO_SMS_CODE }}</span>
+            </span>
+            <input
+              v-model.trim="smsCode"
+              aria-label="短信验证码"
+              aria-describedby="demo-sms-code"
+              type="text"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              pattern="[0-9]{4}"
+              maxlength="4"
+              required
+            />
+          </label>
           <label class="field"
             >实名<input v-model="form.realName" autocomplete="name" maxlength="80" required
           /></label>
-          <p class="muted small">实名仅对所申请或已加入班级的班级管理员可见。</p>
+          <p class="muted small">实名仅对所申请或已加入班级的教师可见。</p>
           <label class="field"
             >昵称<input v-model="form.nickname" autocomplete="nickname" maxlength="80" required
           /></label>
@@ -185,9 +217,15 @@ function changePassword() {
             :autocomplete="registration ? 'new-password' : 'current-password'"
             required
         /></label>
+        <template v-if="registration">
+          <EnrollmentFields v-model="placement" :options="enrollmentOptions || []" />
+          <p v-if="enrollmentOptions && !hasPlacementOptions" class="muted small">暂无可选班级。</p>
+        </template>
         <div v-if="error" class="note warn" role="alert">{{ error }}</div>
-        <button class="primary" :disabled="busy">{{ registration ? '注册' : '登录' }}</button>
-        <button class="ghost" type="button" @click="registration = !registration">
+        <button class="primary" :disabled="busy || (registration && !placement.classId)">
+          {{ registration ? '注册' : '登录' }}
+        </button>
+        <button class="ghost" type="button" :disabled="busy" @click="toggleRegistration">
           {{ registration ? '已有账号，去登录' : '没有账号，去注册' }}
         </button>
       </form>
@@ -236,28 +274,13 @@ function changePassword() {
           >
           <span :class="{ done: actor.canStudy }"><Icon name="Users" :size="17" /> 入班审核</span>
         </div>
-        <form
-          v-if="['none', 'rejected'].includes(actor.schoolStatus)"
-          class="stack"
-          @submit.prevent="applySchool"
-        >
-          <p v-if="actor.schoolStatus === 'rejected'" class="note warn">
-            入校申请未通过，可以重新选择学校提交。
-          </p>
-          <label class="field"
-            >学校<select v-model="schoolId" required>
-              <option value="">请选择学校</option>
-              <option v-for="item in schools" :key="item.id" :value="item.id">{{ item.name }}</option>
-            </select></label
-          >
-          <p v-if="!schools.length" class="muted small">暂无可申请的学校。</p>
-          <button class="primary" :disabled="busy || !schoolId">提交入校申请</button>
-        </form>
-        <div v-else-if="actor.schoolStatus === 'pending'" class="note">
-          <strong>{{ actor.schoolName }} · 待学校管理员审核</strong>
-          <p>审核后可以申请专业、届别和班级。</p>
+        <div v-if="actor.schoolStatus === 'pending'" class="note">
+          <strong>{{ actor.schoolName }} · 待入校审核</strong>
         </div>
-        <template v-else>
+        <p v-else-if="actor.schoolStatus === 'rejected'" class="note warn">
+          入校申请未通过，可以重新选择学校和班级提交。
+        </p>
+        <template v-if="['pending', 'approved'].includes(actor.schoolStatus)">
           <div
             v-for="item in actor.enrollments"
             :key="item.id"
@@ -265,40 +288,25 @@ function changePassword() {
             :class="{ warn: item.status === 'rejected' }"
           >
             {{ item.major }} · {{ item.cohort }} · {{ item.name }}　{{
-              item.status === 'pending' ? '待入班审核' : '申请未通过'
+              item.status === 'pending'
+                ? actor.schoolStatus === 'pending'
+                  ? '已提交入班申请'
+                  : '待入班审核'
+                : '入班申请未通过'
             }}
           </div>
-          <form class="stack" @submit.prevent="applyClass">
-            <label class="field"
-              >专业<select v-model="major" required @change="changeMajor">
-                <option value="">请选择专业</option>
-                <option v-for="name in majors" :key="name">{{ name }}</option>
-              </select></label
-            >
-            <label class="field"
-              >届别<select v-model="cohort" required @change="classId = ''" :disabled="!major">
-                <option value="">请选择届别</option>
-                <option v-for="name in cohorts" :key="name">{{ name }}</option>
-              </select></label
-            >
-            <label class="field"
-              >班级<select v-model="classId" required :disabled="!cohort">
-                <option value="">请选择班级</option>
-                <option
-                  v-for="item in classChoices"
-                  :key="item.id"
-                  :value="item.id"
-                  :disabled="waitingClass.some((active) => active.id === item.id)"
-                >
-                  {{ item.name }}
-                </option>
-              </select></label
-            >
-            <button class="primary" :disabled="busy || !classId">提交入班申请</button>
-          </form>
         </template>
-        <p v-if="error" class="note warn" role="alert">{{ error }}</p>
-        <p v-if="success" class="note" role="status">{{ success }}</p>
+        <form v-if="needsPlacement" class="stack" @submit.prevent="applyClass">
+          <EnrollmentFields
+            v-model="placement"
+            :fixed-school-id="fixedSchoolId"
+            :options="enrollmentOptions || []"
+          />
+          <p v-if="enrollmentOptions && !hasPlacementOptions" class="muted small">暂无可选班级。</p>
+          <button class="primary" :disabled="busy || !placement.classId">提交申请</button>
+        </form>
+        <p v-if="error && !profile" class="note warn" role="alert">{{ error }}</p>
+        <p v-if="success && !profile" class="note" role="status">{{ success }}</p>
         <button class="secondary" :disabled="busy" @click="request(refresh)">刷新审核状态</button>
       </main>
     </div>
@@ -334,7 +342,12 @@ function changePassword() {
           <h2>我的账号</h2>
           <button class="icon-button" aria-label="关闭" @click="profile = false"><Icon name="X" /></button>
         </div>
-        <p class="muted">手机号 {{ actor.phone }}</p>
+        <form class="stack" @submit.prevent="savePhone">
+          <label class="field"
+            >手机号<input v-model="accountPhone" type="tel" autocomplete="tel" required
+          /></label>
+          <button class="secondary" :disabled="busy || accountPhone === actor.phone">保存手机号</button>
+        </form>
         <form class="stack" @submit.prevent="saveNickname">
           <label class="field">昵称<input v-model="nickname" maxlength="80" required /></label
           ><button class="secondary" :disabled="busy">保存昵称</button>

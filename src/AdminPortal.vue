@@ -7,21 +7,22 @@ const { actor } = defineProps({ actor: { type: Object, required: true } })
 const system = computed(() => actor.role === 'system_admin')
 const schoolAdmin = computed(() => actor.role === 'school_admin')
 const managesSchool = computed(() => system.value || schoolAdmin.value)
-const roleTitle = computed(() =>
-  system.value ? '系统管理员' : schoolAdmin.value ? '学校管理员' : '班级管理员',
-)
+const roleTitle = computed(() => (system.value ? '系统管理员' : schoolAdmin.value ? '学校管理员' : '教师'))
 const allTabs = [
   ['setup', '学校与班级', 'School'],
   ['school', '入校审核', 'ShieldCheck'],
   ['class', '入班审核', 'ClipboardList'],
   ['roster', '学生名册', 'Users'],
+  ['accounts', '账号管理', 'Settings2'],
   ['admins', '管理员设置', 'User'],
   ['files', '教材与资源', 'BookOpen'],
 ]
 const tabs = computed(() =>
-  allTabs.filter(([id]) =>
-    id === 'school' ? schoolAdmin.value : ['setup', 'admins'].includes(id) ? managesSchool.value : true,
-  ),
+  allTabs
+    .filter(([id]) =>
+      id === 'school' ? schoolAdmin.value : ['setup', 'admins'].includes(id) ? managesSchool.value : true,
+    )
+    .map(([id, name, icon]) => [id, id === 'admins' && schoolAdmin.value ? '教师设置' : name, icon]),
 )
 const page = ref(managesSchool.value ? 'setup' : 'class')
 const structure = ref({ schools: [], majors: [], classes: [] })
@@ -32,6 +33,11 @@ const classes = computed(() => structure.value.classes.filter((item) => item.sch
 const currentSchool = computed(() => structure.value.schools.find((item) => item.id === schoolId.value))
 const applicants = ref([])
 const roster = ref({ users: [], canSeeRealName: false })
+const accounts = ref([])
+const accountSearch = ref('')
+const accountQuery = ref('')
+const nextAccount = ref(null)
+const accountRoles = { school_admin: '学校管理员', class_admin: '教师', student: '学生' }
 const newOnly = ref(false)
 const files = ref([])
 const upload = ref(null)
@@ -62,7 +68,8 @@ async function refreshPage() {
     )
     if (page.value === selected.page && classId.value === selected.id && newOnly.value === selected.newOnly)
       roster.value = result
-  } else if (page.value === 'files') files.value = await api('/materials')
+  } else if (page.value === 'accounts') await loadAccounts()
+  else if (page.value === 'files') files.value = await api('/materials')
 }
 async function run(work) {
   busy.value = true
@@ -129,7 +136,43 @@ function saveAdmin() {
     const item = await api('/admin/administrators', { method: 'POST', body: form.value })
     provisioned.value = [item]
     modal.value = 'result'
-    message.value = '管理员已设置'
+    message.value = system.value ? '管理员已设置' : '教师已设置'
+  })
+}
+async function loadAccounts(after = null) {
+  const keyword = accountQuery.value
+  const params = new URLSearchParams({ q: keyword })
+  if (after) params.set('after', after)
+  const result = await api(`/admin/accounts?${params}`)
+  if (page.value !== 'accounts' || keyword !== accountQuery.value) return
+  accounts.value = after ? [...accounts.value, ...result.accounts] : result.accounts
+  nextAccount.value = result.next
+}
+function searchAccounts() {
+  accountQuery.value = accountSearch.value.trim()
+  return run(loadAccounts)
+}
+function openAccount(kind, account) {
+  show(kind)
+  form.value = { id: account.id, nickname: account.nickname, phone: account.phone }
+}
+function saveAccountPhone() {
+  return run(async () => {
+    const { id, phone } = form.value
+    const item = await api(`/admin/accounts/${id}/phone`, { method: 'PATCH', body: { phone } })
+    accounts.value = accounts.value.map((account) =>
+      account.id === id ? { ...account, phone: item.phone } : account,
+    )
+    modal.value = ''
+    message.value = '手机号已修改'
+  })
+}
+function resetAccountPassword() {
+  return run(async () => {
+    const account = { ...form.value }
+    const result = await api(`/admin/accounts/${account.id}/reset-password`, { method: 'POST' })
+    provisioned.value = [{ ...account, ...result, passwordLabel: '临时密码' }]
+    modal.value = 'result'
   })
 }
 function parseStudents(value) {
@@ -236,7 +279,7 @@ function uploadMaterial() {
           <p class="small muted">{{ currentSchool?.name || '站点管理' }}</p>
           <h1>{{ title }}</h1>
         </div>
-        <label v-if="system" class="field"
+        <label v-if="system && page !== 'accounts'" class="field"
           >学校<select v-model="schoolId" aria-label="查看学校">
             <option v-for="item in structure.schools" :key="item.id" :value="item.id">
               {{ item.name }}
@@ -362,12 +405,76 @@ function uploadMaterial() {
         </div>
       </section>
 
+      <section v-else-if="page === 'accounts'" class="paper panel stack">
+        <form class="row wrap" @submit.prevent="searchAccounts">
+          <label class="search">
+            <Icon name="Search" :size="17" />
+            <input v-model="accountSearch" aria-label="搜索账号" placeholder="手机号或昵称" />
+          </label>
+          <button class="secondary" :disabled="busy">搜索</button>
+        </form>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>昵称</th>
+                <th>手机号</th>
+                <th>角色</th>
+                <th>学校</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="account in accounts" :key="account.id">
+                <td>{{ account.nickname }}</td>
+                <td>{{ account.phone }}</td>
+                <td>{{ accountRoles[account.role] }}</td>
+                <td>{{ account.schoolName || '待选择' }}</td>
+                <td>
+                  <div class="row">
+                    <button
+                      class="secondary"
+                      :disabled="busy"
+                      @click="openAccount('account-phone', account)"
+                    >
+                      修改手机号
+                    </button>
+                    <button
+                      class="ghost"
+                      :disabled="busy"
+                      @click="openAccount('account-password', account)"
+                    >
+                      重置密码
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p v-if="!busy && !accounts.length" class="empty">暂无符合条件的账号。</p>
+        <button
+          v-if="nextAccount"
+          class="secondary"
+          :disabled="busy"
+          @click="run(() => loadAccounts(nextAccount))"
+        >
+          加载更多
+        </button>
+      </section>
+
       <section v-else-if="page === 'admins'" class="paper panel stack">
         <div class="section-title">
-          <h2>{{ system ? '系统与学校管理员' : '班级管理员' }}</h2>
-          <button class="primary" @click="show('admin')"><Icon name="Plus" :size="16" /> 设置管理员</button>
+          <h2>{{ system ? '系统与学校管理员' : '教师' }}</h2>
+          <button class="primary" @click="show('admin')">
+            <Icon name="Plus" :size="16" /> {{ system ? '设置管理员' : '设置教师' }}
+          </button>
         </div>
-        <p class="muted">按手机号查找已有账号并设置角色，也可预录新的管理员账号。</p>
+        <p class="muted">
+          {{
+            system ? '按手机号设置已有账号的角色，也可预录新账号。' : '按手机号设置教师，并分配负责的班级。'
+          }}
+        </p>
       </section>
 
       <section v-else class="paper panel stack">
@@ -394,7 +501,9 @@ function uploadMaterial() {
                 school: '新建学校',
                 major: '新增专业',
                 class: '新建班级',
-                admin: '设置管理员',
+                admin: system ? '设置管理员' : '设置教师',
+                'account-phone': '修改手机号',
+                'account-password': '重置密码',
                 students: '批量录入学生',
                 result: '录入结果',
                 file: '上传教材或资源',
@@ -443,7 +552,7 @@ function uploadMaterial() {
             </select></label
           >
           <label v-if="form.role === 'class_admin'" class="field"
-            >管理班级<select v-model="form.classId" required>
+            >负责班级<select v-model="form.classId" required>
               <option v-for="item in classes" :key="item.id" :value="item.id">
                 {{ classLabel(item) }}
               </option>
@@ -453,8 +562,18 @@ function uploadMaterial() {
           ><label class="field">实名（新账号）<input v-model="form.realName" /></label
           ><label class="field">昵称（新账号）<input v-model="form.nickname" /></label>
           <p class="muted small">已有账号保留原实名、昵称和密码。新账号会生成初始密码。</p>
-          <button class="primary" :disabled="busy">设置管理员</button>
+          <button class="primary" :disabled="busy">{{ system ? '设置管理员' : '设置教师' }}</button>
         </form>
+        <form v-else-if="modal === 'account-phone'" class="stack" @submit.prevent="saveAccountPhone">
+          <p>{{ form.nickname }}</p>
+          <label class="field">新手机号<input v-model="form.phone" type="tel" required /></label>
+          <button class="primary" :disabled="busy">保存手机号</button>
+        </form>
+        <div v-else-if="modal === 'account-password'" class="stack">
+          <p>{{ form.nickname }} · {{ form.phone }}</p>
+          <p class="muted small">重置后，该账号需用新生成的临时密码重新登录。</p>
+          <button class="primary" :disabled="busy" @click="resetAccountPassword">生成临时密码</button>
+        </div>
         <form v-else-if="modal === 'students'" class="stack" @submit.prevent="addStudents">
           <label class="field"
             >每行一位学生，可粘贴表格三列<textarea
@@ -473,7 +592,7 @@ function uploadMaterial() {
           >
             <strong>{{ item.phone }} {{ item.nickname }}</strong>
             <p v-if="item.temporaryPassword">
-              初始密码 <code>{{ item.temporaryPassword }}</code>
+              {{ item.passwordLabel || '初始密码' }} <code>{{ item.temporaryPassword }}</code>
             </p>
             <p v-else>{{ item.message || '已设置，使用原密码登录。' }}</p>
           </div></template
