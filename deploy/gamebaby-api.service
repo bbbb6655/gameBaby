@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=gamebaby
-Group=gamebaby
+User=gamebaby-api-run
+Group=gamebaby-api-run
 WorkingDirectory=/opt/gamebaby/current
 EnvironmentFile=/opt/gamebaby/api.env
 Environment=APP_PUBLIC_PORTS=81,82

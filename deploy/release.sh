@@ -44,9 +44,10 @@ old_units=()
 for unit in gamebaby-api.service gamebaby@81.service gamebaby@82.service; do
   if systemctl is-active --quiet "$unit"; then old_units+=("$unit"); fi
 done
-getent passwd gamebaby >/dev/null || useradd --system --user-group --no-create-home --shell /usr/sbin/nologin gamebaby
+runtime_user=gamebaby-api-run
+getent -s files passwd "$runtime_user" >/dev/null || useradd --system --user-group --no-create-home --shell /usr/sbin/nologin "$runtime_user"
 install -d -m 0755 "$base/uploads"
-install -d -m 0755 -o gamebaby -g gamebaby "$base/uploads/avatars" "$base/uploads/materials"
+install -d -m 0755 -o "$runtime_user" -g "$runtime_user" "$base/uploads/avatars" "$base/uploads/materials"
 install -m 0644 "$release/deploy/gamebaby-api.service" /etc/systemd/system/gamebaby-api.service
 systemctl daemon-reload
 if ((${#old_units[@]})); then systemctl stop "${old_units[@]}"; fi
