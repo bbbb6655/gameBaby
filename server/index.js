@@ -2,6 +2,7 @@ import express from 'express'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createClient } from 'redis'
+import { DEMO_SMS_CODE } from '../src/registration.js'
 import { db, rows } from './db.js'
 import { accountRoutes } from './account-management.js'
 import {
@@ -12,6 +13,7 @@ import {
   registerStudent,
 } from './enrollment.js'
 import { fileRoutes } from './files.js'
+import { DEFAULT_ADMIN_LOGIN, initializeDatabase } from './startup.js'
 import { studyRoutes } from './study.js'
 import {
   fail,
@@ -31,7 +33,7 @@ const redis = createClient({
   socket: { connectTimeout: 5000 },
 })
 redis.on('error', () => console.error('Redis 连接异常'))
-await Promise.all([rows('SELECT 1'), redis.connect()])
+await Promise.all([initializeDatabase(cipher), redis.connect()])
 
 const sessions = sessionService(redis)
 const app = express()
@@ -58,6 +60,11 @@ app.get('/api/health', async (req, res) => {
 
 app.get('/api/enrollment-options', async (req, res) => res.json(await enrollmentOptions()))
 
+app.post('/api/auth/sms-code', (req, res) => {
+  phoneNumber(req.body?.phone)
+  res.json({ code: DEMO_SMS_CODE })
+})
+
 app.post('/api/auth/register', async (req, res) => {
   const userId = await registerStudent(req.body, cipher)
   const actor = await actorById(userId)
@@ -66,10 +73,14 @@ app.post('/api/auth/register', async (req, res) => {
 })
 
 app.post('/api/auth/login', async (req, res) => {
-  const phone = phoneNumber(req.body.phone)
+  const identifier = req.body?.phone
+  const phone =
+    typeof identifier === 'string' && identifier.trim() === DEFAULT_ADMIN_LOGIN
+      ? DEFAULT_ADMIN_LOGIN
+      : phoneNumber(identifier)
   const password = validPassword(req.body.password)
   const [user] = await rows('SELECT id,password_hash FROM users WHERE phone=?', [phone])
-  if (!user || !(await matchPassword(password, user.password_hash))) fail(401, '手机号或密码不正确')
+  if (!user || !(await matchPassword(password, user.password_hash))) fail(401, '账号或密码不正确')
   await sessions.start(req, res, user.id, user.password_hash)
   res.json(publicActor(await actorById(user.id)))
 })

@@ -1,12 +1,11 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Icon from './Icon.vue'
 import Mobile from './Mobile.vue'
 import Desktop from './Desktop.vue'
 import AdminPortal from './AdminPortal.vue'
 import EnrollmentFields from './EnrollmentFields.vue'
 import { api } from './api.js'
-import { DEMO_SMS_CODE } from './registration.js'
 
 const props = defineProps({ mode: { type: String, required: true } })
 const actor = ref(null)
@@ -17,6 +16,7 @@ const success = ref('')
 const registration = ref(false)
 const form = ref({ phone: '', realName: '', nickname: '', password: '' })
 const smsCode = ref('')
+const demoSmsCode = ref('')
 const enrollmentOptions = ref(null)
 const emptyPlacement = () => ({ schoolId: '', majorId: '', cohort: '', classId: '' })
 const placement = ref(emptyPlacement())
@@ -88,6 +88,20 @@ onMounted(async () => {
 })
 onBeforeUnmount(() => window.removeEventListener('gamebaby-study-error', showStudyError))
 
+function clearSmsCode() {
+  smsCode.value = ''
+  demoSmsCode.value = ''
+}
+watch(() => form.value.phone, clearSmsCode)
+
+function getSmsCode() {
+  return request(async () => {
+    const phone = form.value.phone
+    const { code } = await api('/auth/sms-code', { method: 'POST', body: { phone } })
+    if (phone === form.value.phone) demoSmsCode.value = code
+  })
+}
+
 async function authenticate() {
   await request(async () => {
     const body = registration.value
@@ -95,14 +109,14 @@ async function authenticate() {
       : form.value
     changeActor(await api(`/auth/${registration.value ? 'register' : 'login'}`, { method: 'POST', body }))
     form.value.password = ''
-    smsCode.value = ''
+    clearSmsCode()
     placement.value = emptyPlacement()
     await refresh()
   })
 }
 function toggleRegistration() {
   registration.value = !registration.value
-  smsCode.value = ''
+  clearSmsCode()
   error.value = ''
   if (registration.value) return request(loadEnrollmentOptions)
 }
@@ -181,27 +195,47 @@ function changePassword() {
         <img src="/baby/baby-08.png" alt="宝宝漫画" />
       </div>
       <form class="account-form stack" @submit.prevent="authenticate">
-        <h2>{{ registration ? '注册账号' : '手机号登录' }}</h2>
-        <label class="field"
-          >手机号<input v-model="form.phone" type="tel" autocomplete="username" required
-        /></label>
+        <h2>{{ registration ? '注册账号' : '账号登录' }}</h2>
+        <label class="field">
+          {{ registration ? '手机号' : '手机号或账号' }}
+          <input
+            v-model="form.phone"
+            :type="registration ? 'tel' : 'text'"
+            autocomplete="username"
+            required
+          />
+        </label>
         <template v-if="registration">
-          <label class="field">
+          <div class="field">
             <span class="row between">
-              短信验证码 <span id="demo-sms-code" class="tag">演示码 {{ DEMO_SMS_CODE }}</span>
+              <label for="sms-code">短信验证码</label>
+              <span v-if="demoSmsCode" id="demo-sms-code" class="tag" role="status"
+                >演示码 {{ demoSmsCode }}</span
+              >
             </span>
-            <input
-              v-model.trim="smsCode"
-              aria-label="短信验证码"
-              aria-describedby="demo-sms-code"
-              type="text"
-              inputmode="numeric"
-              autocomplete="one-time-code"
-              pattern="[0-9]{4}"
-              maxlength="4"
-              required
-            />
-          </label>
+            <div class="row">
+              <input
+                id="sms-code"
+                v-model.trim="smsCode"
+                class="grow inline-input"
+                :aria-describedby="demoSmsCode ? 'demo-sms-code' : undefined"
+                type="text"
+                inputmode="numeric"
+                autocomplete="one-time-code"
+                pattern="[0-9]{4}"
+                maxlength="4"
+                required
+              />
+              <button
+                class="secondary sms-button"
+                type="button"
+                :disabled="busy || !form.phone.trim()"
+                @click="getSmsCode"
+              >
+                获取验证码
+              </button>
+            </div>
+          </div>
           <label class="field"
             >实名<input v-model="form.realName" autocomplete="name" maxlength="80" required
           /></label>
@@ -343,9 +377,10 @@ function changePassword() {
           <button class="icon-button" aria-label="关闭" @click="profile = false"><Icon name="X" /></button>
         </div>
         <form class="stack" @submit.prevent="savePhone">
-          <label class="field"
-            >手机号<input v-model="accountPhone" type="tel" autocomplete="tel" required
-          /></label>
+          <label class="field">
+            {{ actor.phone === 'admin' ? '登录账号或手机号' : '手机号' }}
+            <input v-model="accountPhone" type="tel" autocomplete="tel" required />
+          </label>
           <button class="secondary" :disabled="busy || accountPhone === actor.phone">保存手机号</button>
         </form>
         <form class="stack" @submit.prevent="saveNickname">
@@ -360,16 +395,24 @@ function changePassword() {
               @change="avatar = $event.target.files[0]" /></label
           ><button class="secondary" :disabled="busy || !avatar">上传头像</button>
         </form>
-        <details>
-          <summary>修改密码</summary>
-          <form class="stack" @submit.prevent="changePassword">
-            <label class="field"
-              >当前密码<input v-model="password.currentPassword" type="password" required /></label
-            ><label class="field"
-              >新密码<input v-model="password.newPassword" type="password" required /></label
-            ><button class="secondary" :disabled="busy">保存密码</button>
-          </form>
-        </details>
+        <form class="stack" @submit.prevent="changePassword">
+          <h3>修改密码</h3>
+          <label class="field"
+            >当前密码<input
+              v-model="password.currentPassword"
+              type="password"
+              autocomplete="current-password"
+              required
+          /></label>
+          <label class="field"
+            >新密码<input
+              v-model="password.newPassword"
+              type="password"
+              autocomplete="new-password"
+              required
+          /></label>
+          <button class="secondary" :disabled="busy">保存密码</button>
+        </form>
         <template v-if="!blocked"
           ><h3>教材和资源</h3>
           <a v-for="file in profileResources" :key="file.id" class="choice" :href="`/api/files/${file.id}`"

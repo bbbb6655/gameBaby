@@ -44,6 +44,10 @@
 .account-form {
   padding: 21px;
 }
+.sms-button {
+  flex: none;
+  white-space: nowrap;
+}
 .account-form h2 {
   font-size: 1.24rem;
 }
@@ -148,10 +152,6 @@
 }
 .admin-portal .panel h2 {
   font-size: 1.1rem;
-}
-.modal details summary {
-  cursor: pointer;
-  margin: 5px 0;
 }
 @media (max-width: 720px) {
   .account-hero {
