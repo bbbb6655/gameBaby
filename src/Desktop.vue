@@ -7,7 +7,8 @@ import Trend from './Trend.vue'
 import { ageLabel, bands, cases, domains, events, knowledge, policyFor, portrait } from './model.js'
 import { createStore } from './store.js'
 
-const { data, dispatch } = createStore(true)
+const props = defineProps({ accountState: Object, demoRole: String, demoAccount: String })
+const { data, dispatch } = createStore(props.accountState, props.demoAccount)
 const roles = { teacher: '教师', school: '学校管理员', platform: '平台管理员', student: '学生' }
 const menu = {
   teacher: [
@@ -37,7 +38,11 @@ const menu = {
   ],
 }
 const initialRole = location.hash.slice(1)
-const role = ref(Object.hasOwn(roles, initialRole) ? initialRole : 'teacher')
+const role = ref(
+  props.accountState
+    ? 'student'
+    : props.demoRole || (Object.hasOwn(roles, initialRole) ? initialRole : 'teacher'),
+)
 const requestedSchool = new URLSearchParams(location.search).get('school')
 const schoolId = ref(Object.hasOwn(data.value.schools, requestedSchool) ? requestedSchool : 'a')
 const school = computed(() => data.value.schools[schoolId.value] || data.value.schools.a)
@@ -408,12 +413,22 @@ function exportCsv() {
           >
         </div>
         <div class="top-controls">
-          <span class="tag preview-label">Mock 原型</span
-          ><select v-if="role !== 'platform'" v-model="schoolId" class="select" aria-label="切换学校">
+          <span class="tag preview-label">{{ accountState ? '学生空间' : '教学演示' }}</span
+          ><select
+            v-if="!accountState && role !== 'platform'"
+            v-model="schoolId"
+            class="select"
+            aria-label="切换演示学校"
+          >
             <option v-for="[id, item] in siteEntries" :key="id" :value="id" :disabled="!item.enabled">
               {{ item.name }}
             </option></select
-          ><select v-model="role" class="select" aria-label="切换演示角色">
+          ><select
+            v-if="!accountState && !demoRole"
+            v-model="role"
+            class="select"
+            aria-label="切换演示角色"
+          >
             <option v-for="(label, key) in roles" :key="key" :value="key">{{ label }}</option>
           </select>
         </div>
@@ -597,9 +612,7 @@ function exportCsv() {
                   <span class="tag">照护 {{ school.logs.filter((x) => x.kind === 'care').length }} 次</span
                   ><span class="tag"
                     >随机事件
-                    {{
-                      school.logs.filter((x) => x.kind === 'event' && x.detail.includes('正确')).length
-                    }}
+                    {{ school.logs.filter((x) => x.kind === 'event' && x.detail.includes('正确')).length }}
                     / {{ school.logs.filter((x) => x.kind === 'event').length }}</span
                   ><span class="tag"
                     >社区发帖 {{ school.posts.filter((x) => x.author === school.student).length }} 条</span
@@ -977,12 +990,7 @@ function exportCsv() {
                   "
                 >
                   <Icon name="Pencil" :size="15" /> 编辑站点</button
-                ><button
-                  class="ghost"
-                  @click="enterSchool(id)"
-                >
-                  进入学校
-                </button>
+                ><button class="ghost" @click="enterSchool(id)">进入学校</button>
               </div>
             </article>
           </div></template

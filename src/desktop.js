@@ -1,6 +1,8 @@
 import { createApp } from 'vue'
-import Desktop from './Desktop.vue'
+import AccountApp from './AccountApp.vue'
 import './styles/common.css'
+import './styles/mobile.css'
 import './styles/desktop.css'
+import './styles/account.css'
 
-createApp(Desktop).mount('#app')
+createApp(AccountApp, { mode: 'desktop' }).mount('#app')

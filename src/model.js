@@ -367,17 +367,6 @@ export function initialData() {
   }
 }
 
-export const STORAGE = 'gamebaby-prototype-v1'
-export function readData() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE))
-    if (saved?.schools?.a && saved.schools.b) return saved
-  } catch {
-    /* 浏览器禁用存储时仍可演示 */
-  }
-  return initialData()
-}
-
 const stamp = () =>
   new Date().toLocaleString('zh-CN', {
     month: 'numeric',

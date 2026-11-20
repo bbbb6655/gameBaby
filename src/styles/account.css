@@ -1,0 +1,188 @@
+.account-page {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 22px 14px;
+  background: radial-gradient(ellipse at 20% 0, #e3efd9, transparent 55%), #f5f8f2;
+}
+.account-wait {
+  min-height: 32vh;
+  display: grid;
+  place-content: center;
+  gap: 12px;
+  color: var(--muted);
+}
+.account-card {
+  width: min(100%, 465px);
+  overflow: hidden;
+}
+.account-hero {
+  position: relative;
+  display: flex;
+  align-items: start;
+  gap: 10px;
+  min-height: 164px;
+  padding: 24px 18px;
+  background: linear-gradient(112deg, #e2efd9, #f0f6e6);
+}
+.account-hero h1 {
+  font-size: 1.65rem;
+}
+.account-hero p {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-top: 4px;
+}
+.account-hero img {
+  position: absolute;
+  width: 42%;
+  height: 93%;
+  object-fit: contain;
+  bottom: 0;
+  right: 1.2%;
+}
+.account-form {
+  padding: 21px;
+}
+.account-form h2 {
+  font-size: 1.24rem;
+}
+.account-bar {
+  padding: 5px max(12px, calc((100% - 1250px) / 2));
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+}
+.account-bar img {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 50%;
+}
+.account-bar .ghost {
+  min-height: 31px;
+  padding: 4px 8px;
+}
+.account-pending {
+  min-height: calc(100dvh - 48px);
+}
+.account-review {
+  width: min(100%, 580px);
+  padding: 20px;
+}
+.account-review h1 {
+  font-size: 1.45rem;
+}
+.account-steps {
+  display: flex;
+  gap: 8px;
+}
+.account-steps span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  padding: 10px 9px;
+  border-radius: 9px;
+  background: #f3f5ef;
+  color: var(--muted);
+  font-size: 0.87rem;
+}
+.account-steps .done {
+  color: var(--green);
+  background: #e4f1e4;
+}
+.admin-portal {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  min-height: calc(100dvh - 48px);
+}
+.admin-side {
+  background: #193c2e;
+  padding: 20px 12px;
+  color: #f6fbf4;
+}
+.admin-side .brand {
+  padding: 0 5px;
+}
+.admin-side nav {
+  margin-top: 22px;
+  display: grid;
+  gap: 6px;
+}
+.admin-side button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #e5f0e8;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  text-align: left;
+  padding: 9px 8px;
+  font-size: 0.88rem;
+}
+.admin-side button:hover,
+.admin-side button.active {
+  background: #dcefd5;
+  color: #245241;
+}
+.admin-main {
+  align-content: start;
+  padding: 21px;
+}
+.admin-main .paper {
+  min-width: 0;
+}
+.admin-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 10px;
+}
+.admin-heading h1 {
+  font-size: 1.9rem;
+}
+.admin-portal .panel h2 {
+  font-size: 1.1rem;
+}
+.modal details summary {
+  cursor: pointer;
+  margin: 5px 0;
+}
+@media (max-width: 720px) {
+  .account-hero {
+    min-height: 138px;
+  }
+  .account-form,
+  .account-review {
+    padding: 15px;
+  }
+  .account-bar {
+    padding-inline: 8px;
+    font-size: 0.83rem;
+  }
+  .admin-portal {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .admin-side {
+    padding: 8px;
+  }
+  .admin-side nav {
+    display: flex;
+    overflow: auto;
+    margin: 8px 0 0;
+  }
+  .admin-side button {
+    flex: none;
+  }
+  .admin-main {
+    padding: 12px;
+  }
+  .admin-heading h1 {
+    font-size: 1.4rem;
+  }
+}

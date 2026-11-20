@@ -1,0 +1,20 @@
+[Unit]
+Description=养崽日记 Web 与 API
+After=network-online.target redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gamebaby
+Group=gamebaby
+WorkingDirectory=/opt/gamebaby/current
+EnvironmentFile=/opt/gamebaby/api.env
+Environment=APP_PUBLIC_PORTS=81,82
+Environment=UPLOAD_DIR=/opt/gamebaby/uploads
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+ExecStart=/opt/gamebaby/tools/node-v22.19.0-linux-x64/bin/node server/index.js
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

@@ -1,60 +1,76 @@
-import { shallowRef } from 'vue'
-import { initialData, readData, reduce, STORAGE } from './model.js'
+import { onBeforeUnmount, shallowRef } from 'vue'
+import { initialData, reduce } from './model.js'
+import { api } from './api.js'
 
-let sessionData
+const clone = (value) => JSON.parse(JSON.stringify(value))
 
-export function commit(action) {
-  const next = reduce(sessionData || readData(), action)
+function demoStore(account) {
+  const key = `gamebaby-teaching-demo:${account}`
+  let initial
   try {
-    localStorage.setItem(STORAGE, JSON.stringify(next))
+    initial = JSON.parse(localStorage.getItem(key))
   } catch {
-    sessionData = next
+    /* 使用演示初始数据 */
   }
-  return next
+  const data = shallowRef(initial || initialData())
+  return {
+    data,
+    dispatch(action) {
+      data.value = reduce(clone(data.value), action)
+      try {
+        localStorage.setItem(key, JSON.stringify(data.value))
+      } catch {
+        /* 当前页面仍可演示 */
+      }
+    },
+  }
 }
 
-export function createStore(desktop = false) {
-  const bridged = desktop && location.port === '82'
-  const data = shallowRef(bridged ? initialData() : readData())
-  let iframe
-  let origin
-  let connected = false
-  const pending = []
-  const send = (action) => iframe.contentWindow?.postMessage({ type: 'gamebaby-action', action }, origin)
-  if (bridged) {
-    const bridge = new URL('/mock-bridge.html', location.href)
-    bridge.port = '81'
-    origin = bridge.origin
-    iframe = document.createElement('iframe')
-    iframe.hidden = true
-    iframe.title = '同步浏览器中的演示数据'
-    iframe.src = bridge.href
-    window.addEventListener('message', (event) => {
-      if (
-        event.origin !== origin ||
-        event.source !== iframe.contentWindow ||
-        event.data?.type !== 'gamebaby-state'
-      )
-        return
-      data.value = event.data.value
-      connected = true
-      pending.splice(0).forEach(send)
-    })
-    document.body.append(iframe)
-  } else {
-    window.addEventListener('storage', (event) => {
-      if (event.key === STORAGE) data.value = readData()
-    })
+export function createStore(initialState, demoAccount) {
+  if (!initialState) return demoStore(demoAccount)
+  const data = shallowRef(initialState)
+  let outstanding = 0
+  let queue = Promise.resolve()
+  let revision = 0
+  let mounted = true
+  const notify = (error) =>
+    window.dispatchEvent(new CustomEvent('gamebaby-study-error', { detail: error.message }))
+
+  async function reload() {
+    if (outstanding || !mounted) return
+    const requestedRevision = revision
+    try {
+      const latest = await api('/my/study-state')
+      if (mounted && requestedRevision === revision) data.value = latest
+    } catch (error) {
+      if (mounted) notify(error)
+    }
   }
+  window.addEventListener('focus', reload)
+  onBeforeUnmount(() => {
+    mounted = false
+    window.removeEventListener('focus', reload)
+  })
 
   function dispatch(action) {
-    if (bridged) {
-      const plain = JSON.parse(JSON.stringify(action))
-      if (connected) send(plain)
-      else pending.push(plain)
-    } else {
-      data.value = commit(action)
-    }
+    const plain = clone(action)
+    data.value = reduce(clone(data.value), plain)
+    revision++
+    outstanding++
+    queue = queue.then(async () => {
+      let failed = false
+      try {
+        if (!mounted) return
+        const result = await api('/my/study-state', { method: 'POST', body: plain })
+        if (outstanding === 1 && mounted) data.value = result
+      } catch (error) {
+        failed = true
+        if (mounted) notify(error)
+      } finally {
+        outstanding--
+      }
+      if (failed && !outstanding) await reload()
+    })
   }
   return { data, dispatch }
 }

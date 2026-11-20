@@ -5,9 +5,14 @@ commit=${1:?请提供要发布的 Git 提交 SHA}
 [[ "$commit" =~ ^[a-f0-9]{40}$ ]]
 base=/opt/gamebaby
 release="$base/releases/$commit"
+api_env="$base/api.env"
 export PATH="$base/tools/node-v22.19.0-linux-x64/bin:$PATH"
 
 install -d -m 0755 "$base/releases"
+if [[ ! -s "$api_env" ]]; then
+  printf '%s\n' '缺少应用服务器的 TiDB、Redis 和实名加密配置。' >&2
+  exit 1
+fi
 previous=$(readlink "$base/current" || true)
 if [[ -z "$previous" ]] && ss -ltnH | awk '{ print $4 }' | grep -E ':(81|82)$'; then
   printf '%s\n' '81 或 82 端口已经有服务，停止发布。' >&2
@@ -35,13 +40,16 @@ swap_current() {
   mv -Tf "$link" "$base/current"
 }
 
-unit=/etc/systemd/system/gamebaby@.service
-if [[ -z "$previous" && -e "$unit" ]] && ! cmp -s "$release/deploy/gamebaby@.service" "$unit"; then
-  printf '%s\n' '服务器上已有不同的同名服务配置，停止发布。' >&2
-  exit 1
-fi
-install -m 0644 "$release/deploy/gamebaby@.service" "$unit"
+old_units=()
+for unit in gamebaby-api.service gamebaby@81.service gamebaby@82.service; do
+  if systemctl is-active --quiet "$unit"; then old_units+=("$unit"); fi
+done
+getent passwd gamebaby >/dev/null || useradd --system --user-group --no-create-home --shell /usr/sbin/nologin gamebaby
+install -d -m 0755 "$base/uploads"
+install -d -m 0755 -o gamebaby -g gamebaby "$base/uploads/avatars" "$base/uploads/materials"
+install -m 0644 "$release/deploy/gamebaby-api.service" /etc/systemd/system/gamebaby-api.service
 systemctl daemon-reload
+if ((${#old_units[@]})); then systemctl stop "${old_units[@]}"; fi
 swap_current "$release"
 
 healthy() {
@@ -52,12 +60,16 @@ healthy() {
     code=$(curl --noproxy '*' -fsS --max-time 3 "http://127.0.0.1:$port/release.txt") || return 1
     [[ "$entry" == *"$title"* && "$code" == "$commit" ]] || return 1
   done
+  curl --noproxy '*' -fsS --max-time 4 'http://127.0.0.1:81/api/health' >/dev/null
 }
 
-if systemctl restart gamebaby@81.service gamebaby@82.service; then
+if systemctl start gamebaby-api.service; then
   for attempt in {1..12}; do
     if healthy; then
-      systemctl enable gamebaby@81.service gamebaby@82.service
+      systemctl enable gamebaby-api.service
+      for unit in "${old_units[@]}"; do
+        if [[ "$unit" == gamebaby@*.service ]]; then systemctl disable "$unit"; fi
+      done
       printf '已部署 %s，81 和 82 端口健康检查通过。\n' "$commit"
       exit 0
     fi
@@ -65,11 +77,11 @@ if systemctl restart gamebaby@81.service gamebaby@82.service; then
   done
 fi
 
+systemctl stop gamebaby-api.service
 if [[ -n "$previous" ]]; then
   swap_current "$previous"
-  systemctl restart gamebaby@81.service gamebaby@82.service
+  if ((${#old_units[@]})); then systemctl start "${old_units[@]}"; fi
 else
-  systemctl stop gamebaby@81.service gamebaby@82.service
   rm -f "$base/current"
 fi
 printf '%s\n' '原型健康检查失败，已恢复部署前状态。' >&2

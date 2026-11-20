@@ -19,7 +19,8 @@ import {
 } from './model.js'
 import { createStore } from './store.js'
 
-const { data, dispatch } = createStore()
+const props = defineProps({ accountState: Object })
+const { data, dispatch } = createStore(props.accountState)
 const requested = new URLSearchParams(location.search).get('school')
 const schoolId = ref(data.value.schools[requested] ? requested : 'a')
 const school = computed(() => data.value.schools[schoolId.value])
@@ -336,10 +337,7 @@ watch(schoolId, () => {
               :alt="`${baby.nickname}，${ageLabel(baby.age)}，${statusText}`"
               fetchpriority="high"
             />
-            <button
-              class="hero-link"
-              @click="openProfile('成长档案')"
-            >
+            <button class="hero-link" @click="openProfile('成长档案')">
               <Icon name="BookOpen" :size="15" /> 成长档案 <Icon name="ChevronRight" :size="13" />
             </button>
           </section>
@@ -388,12 +386,7 @@ watch(schoolId, () => {
           <section class="paper panel recent">
             <div class="section-title">
               <h2>最近照护</h2>
-              <button
-                class="ghost"
-                @click="openProfile('照护记录')"
-              >
-                全部
-              </button>
+              <button class="ghost" @click="openProfile('照护记录')">全部</button>
             </div>
             <Timeline :items="school.logs.slice(0, 2)" />
           </section>
@@ -617,8 +610,8 @@ watch(schoolId, () => {
         </div>
         <div class="profile-grid">
           <section class="paper panel stack">
-            <h2>演示账号</h2>
-            <label class="field"
+            <h2>我的班级</h2>
+            <label v-if="!accountState" class="field"
               >学校<select v-model="schoolId">
                 <option v-for="(item, id) in data.schools" :key="id" :value="id" :disabled="!item.enabled">
                   {{ item.name }}
@@ -811,12 +804,7 @@ watch(schoolId, () => {
           <template v-else-if="modal === 'accelerate'"
             ><p>{{ baby.age }} 月龄 → {{ baby.age + 1 }} 月龄</p>
             <p class="muted">消耗 1 张成长加速卡，当前剩余 {{ baby.cards }} 张。</p>
-            <button
-              class="primary"
-              @click="accelerate"
-            >
-              使用加速卡
-            </button></template
+            <button class="primary" @click="accelerate">使用加速卡</button></template
           >
           <template v-else-if="modal === 'adopt'"
             ><p>
@@ -826,12 +814,7 @@ watch(schoolId, () => {
           >
           <template v-else-if="modal === 'reset'"
             ><p>清空当前演示宝宝和照护日志，重新体验领养。</p>
-            <button
-              class="primary"
-              @click="resetDemo"
-            >
-              进入领养演示
-            </button></template
+            <button class="primary" @click="resetDemo">进入领养演示</button></template
           >
           <form v-else-if="modal === 'compose'" class="stack" @submit.prevent="createPost">
             <label class="field">标题<input v-model="postTitle" required maxlength="42" /></label
@@ -897,11 +880,7 @@ watch(schoolId, () => {
                 <Icon name="Bookmark" :size="16" />{{
                   school.favorites.includes(selected.id) ? '已收藏' : '收藏'
                 }}</button
-              ><button
-                class="secondary"
-                @click="saveNote"
-              >
-                保存笔记</button
+              ><button class="secondary" @click="saveNote">保存笔记</button
               ><button v-if="selected.action && baby" class="primary" @click="linkedCare">
                 去照护练习
               </button>
