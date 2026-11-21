@@ -10,6 +10,7 @@ import {
   bandFor,
   care,
   cases,
+  demoGrowthSeries,
   domains,
   events,
   freshBaby,
@@ -108,9 +109,9 @@ const adoptionMode = ref('start')
 const startAge = ref(2)
 const nickname = ref('小橙子')
 const ageModes = [
-  { id: 'start', name: '从头开始', hint: '0–3 月龄' },
-  { id: 'skip', name: '分段快进', hint: '任一月龄阶段' },
-  { id: 'custom', name: '自定义月龄', hint: '按课程进度选择' },
+  { id: 'start', name: '从头开始', hint: '0–3 月龄 · 初生期', icon: 'Baby', tone: 'leaf' },
+  { id: 'skip', name: '分段快进', hint: '从指定发育阶段开始', icon: 'Zap', tone: 'gold' },
+  { id: 'custom', name: '自定义月龄', hint: '按课程进度选择月龄', icon: 'Settings2', tone: 'peach' },
 ]
 const allowed = computed(() => {
   const policy = classPolicy.value
@@ -259,17 +260,7 @@ function submitExam() {
 const wrong = computed(() =>
   school.value.attempts.flatMap((item) => item.answers.filter((answer) => !answer.correct)),
 )
-const growthData = computed(() =>
-  growthMetric.value === '身高'
-    ? [
-        { name: '宝宝模拟', values: [60, 64, 67, 70, 72], color: '#43785a' },
-        { name: '参考示意', values: [61, 65, 68, 71, 73], color: '#be9a50' },
-      ]
-    : [
-        { name: '宝宝模拟', values: [5.7, 6.4, 7.2, 7.8, 8.5], color: '#43785a' },
-        { name: '参考示意', values: [5.9, 6.8, 7.4, 8.1, 8.7], color: '#be9a50' },
-      ],
-)
+const growthData = computed(() => baby.value && demoGrowthSeries(baby.value.age, growthMetric.value))
 watch(schoolId, () => {
   circleSection.value = '全部'
   close()
@@ -303,58 +294,49 @@ watch(schoolId, () => {
       </div>
     </header>
 
-    <main class="m-main">
+    <main class="m-main" :class="{ 'm-home': page === 'home' }">
       <template v-if="page === 'home' && baby">
-        <div class="m-heading">
-          <div>
-            <p class="m-overline">{{ school.classes[0] || school.name }} · 养崽实训</p>
-            <h1>我的宝宝</h1>
+        <section class="baby-summary">
+          <div class="baby-identity">
+            <h1>{{ baby.nickname }}</h1>
+            <span>{{ baby.age }} 月龄 · {{ bands[band].name }}</span>
           </div>
-          <button class="secondary demo-button" @click="show('scenarios')">
-            <Icon name="Settings2" :size="16" /> 演示场景
+          <button class="baby-growth" @click="openProfile('成长档案')" aria-label="查看成长档案">
+            <span>成长值 <strong>{{ baby.state.growth }}%</strong></span>
+            <span class="level-track"><span :style="{ width: `${baby.state.growth}%` }"></span></span>
           </button>
-        </div>
-        <div class="home-top">
-          <section
-            class="m-hero"
-            :class="{ 'needs-care': baby.event === 'cry' || baby.event === 'sleepy' }"
+        </section>
+        <StateCards :baby="baby" compact />
+        <section class="m-hero" :class="{ 'needs-care': baby.event === 'cry' || baby.event === 'sleepy' }">
+          <div class="hero-ring ring-one"></div>
+          <div class="hero-ring ring-two"></div>
+          <div class="hero-cross">✦</div>
+          <div class="hero-dot"></div>
+          <button class="hero-settings" @click="show('scenarios')">
+            <Icon name="Settings2" :size="15" /> 演示场景
+          </button>
+          <img
+            :key="portrait(baby)"
+            class="hero-baby"
+            :src="portrait(baby)"
+            :alt="`${baby.nickname}，${ageLabel(baby.age)}，${statusText}`"
+            fetchpriority="high"
+          />
+          <span class="hero-status"><Icon name="Activity" :size="14" /> {{ statusText }}</span>
+        </section>
+        <section class="paper panel event-card">
+          <span class="event-icon"><Icon name="Sparkles" :size="22" /></span>
+          <div class="grow">
+            <span class="tag amber">{{ currentEvent?.type || '情景练习' }}</span>
+            <h2>{{ currentEvent?.title || '午睡醒来突然哭闹' }}</h2>
+          </div>
+          <button
+            class="primary"
+            @click="currentEvent ? show('event', currentEvent) : startScenario('cry')"
           >
-            <div class="hero-ring ring-one"></div>
-            <div class="hero-ring ring-two"></div>
-            <div class="hero-cross">✦</div>
-            <div class="hero-dot"></div>
-            <div class="hero-copy">
-              <span class="hero-age"
-                ><Icon name="Sprout" :size="15" /> {{ baby.age }} 月龄 · {{ bands[band].name }}</span
-              >
-              <h2>{{ baby.nickname }}</h2>
-              <p>{{ baby.age >= 12 ? ageLabel(baby.age) : '宝宝状态' }} · {{ statusText }}</p>
-            </div>
-            <img
-              :key="portrait(baby)"
-              class="hero-baby"
-              :src="portrait(baby)"
-              :alt="`${baby.nickname}，${ageLabel(baby.age)}，${statusText}`"
-              fetchpriority="high"
-            />
-            <button class="hero-link" @click="openProfile('成长档案')">
-              <Icon name="BookOpen" :size="15" /> 成长档案 <Icon name="ChevronRight" :size="13" />
-            </button>
-          </section>
-          <section class="paper status-panel">
-            <div class="section-title">
-              <h2>宝宝状态</h2>
-              <span class="tag"><Icon name="Activity" :size="12" /> 模拟</span>
-            </div>
-            <StateCards :baby="baby" />
-            <div class="row between m-growth">
-              <span><Icon name="Zap" :size="15" /> {{ baby.cards }} 张成长加速卡</span
-              ><button class="ghost" :disabled="!baby.cards || baby.age >= 36" @click="show('accelerate')">
-                使用
-              </button>
-            </div>
-          </section>
-        </div>
+            {{ currentEvent ? '去处理' : '开始练习' }}
+          </button>
+        </section>
         <section class="paper panel m-care">
           <div class="section-title">
             <h2>日常照护</h2>
@@ -366,78 +348,66 @@ watch(schoolId, () => {
             </button>
           </div>
         </section>
-        <div class="home-bottom">
-          <section class="paper panel event-card">
-            <span class="event-icon"><Icon name="Sparkles" :size="22" /></span>
-            <div class="grow">
-              <span class="tag amber">{{ currentEvent?.type || '情景练习' }}</span>
-              <h2>{{ currentEvent?.title || '午睡醒来突然哭闹' }}</h2>
-              <p>
-                {{ currentEvent ? '查看场景线索并选择处理方式。' : '练习根据宝宝的动作和表情做出判断。' }}
-              </p>
-            </div>
-            <button
-              class="primary"
-              @click="currentEvent ? show('event', currentEvent) : startScenario('cry')"
-            >
-              {{ currentEvent ? '去处理' : '开始练习' }}
-            </button>
-          </section>
-          <section class="paper panel recent">
-            <div class="section-title">
-              <h2>最近照护</h2>
-              <button class="ghost" @click="openProfile('照护记录')">全部</button>
-            </div>
-            <Timeline :items="school.logs.slice(0, 2)" />
-          </section>
+        <div class="row between m-growth">
+          <span><Icon name="Zap" :size="15" /> {{ baby.cards }} 张成长加速卡</span>
+          <button class="ghost" :disabled="!baby.cards || baby.age >= 36" @click="show('accelerate')">
+            使用
+          </button>
         </div>
+        <section class="paper panel recent">
+          <div class="section-title">
+            <h2>最近照护</h2>
+            <button class="ghost" @click="openProfile('照护记录')">全部</button>
+          </div>
+          <Timeline :items="school.logs.slice(0, 2)" />
+        </section>
       </template>
 
       <template v-else-if="page === 'home'">
-        <div class="m-heading">
-          <div>
-            <p class="m-overline">{{ school.name }} · {{ school.classes[0] || '养崽实训' }}</p>
-            <h1>领养宝宝</h1>
-          </div>
-        </div>
-        <section class="paper panel adoption">
+        <section class="adoption">
           <div class="adopt-art">
-            <img :src="portrait(freshBaby(startAge))" alt="起始月龄预览" /><strong>{{
-              ageLabel(startAge)
-            }}</strong>
+            <div><p>欢迎！</p><h1>选择宝宝的起始月龄</h1></div>
+            <img :src="portrait(freshBaby(startAge))" :alt="`${ageLabel(startAge)}宝宝预览`" />
           </div>
           <div class="stack">
-            <h2>选择起始月龄</h2>
             <div v-if="classPolicy.mode === 'locked'" class="note">
               教师已为全班指定 {{ classPolicy.locked }} 月龄。
             </div>
-            <div v-else class="adopt-options">
-              <button
+            <fieldset v-else class="adopt-options" aria-label="领养方式">
+              <label
                 v-for="mode in ageModes"
                 :key="mode.id"
                 class="choice"
                 :class="{ active: adoptionMode === mode.id }"
-                :disabled="mode.id === 'start' && !allowed.some((age) => age <= 3)"
-                @click="adoptionMode = mode.id"
               >
-                <Icon :name="adoptionMode === mode.id ? 'Check' : 'Baby'" :size="17" /><span
-                  ><b>{{ mode.name }}</b
-                  ><small>{{ mode.hint }}</small></span
-                >
-              </button>
+                <span class="adopt-icon" :class="mode.tone"><Icon :name="mode.icon" :size="20" /></span>
+                <span><b>{{ mode.name }}</b><small>{{ mode.hint }}</small></span>
+                <input
+                  v-model="adoptionMode"
+                  type="radio"
+                  name="adoption-mode"
+                  :value="mode.id"
+                  :aria-label="mode.name"
+                  :disabled="mode.id === 'start' && !allowed.some((age) => age <= 3)"
+                />
+              </label>
+            </fieldset>
+            <div class="adopt-fields">
+              <label v-if="classPolicy.mode !== 'locked'" class="field">
+                <span id="adoption-age-label">起始月龄</span>
+                <select v-model.number="startAge" aria-labelledby="adoption-age-label">
+                  <option v-for="month in monthOptions" :key="month" :value="month">{{ month }} 月龄</option>
+                </select>
+              </label>
+              <label class="field">宝宝昵称<input v-model="nickname" maxlength="12" /></label>
             </div>
-            <label class="field"
-              >起始月龄<select v-model.number="startAge">
-                <option v-for="month in monthOptions" :key="month" :value="month">{{ month }} 月龄</option>
-              </select></label
-            ><label class="field">宝宝昵称<input v-model="nickname" maxlength="12" /></label>
-            <p class="muted small">确认后起始月龄不可修改，此前阶段的知识可在知识库回看。</p>
+            <p class="adopt-note"><Icon name="CircleAlert" :size="14" /> 起始月龄确认后不可修改。</p>
             <button
               class="primary"
               :disabled="!nickname.trim() || !monthOptions.includes(startAge)"
               @click="show('adopt')"
             >
-              确认领养
+              确认领养宝宝
             </button>
           </div>
         </section>
@@ -651,13 +621,8 @@ watch(schoolId, () => {
                   </button>
                 </div>
               </div>
-              <Trend
-                :labels="['4 月', '5 月', '6 月', '7 月', '8 月']"
-                :lines="growthData"
-                :min="growthMetric === '身高' ? 56 : 4"
-                :max="growthMetric === '身高' ? 76 : 10"
-              />
-              <p class="muted small">曲线为原型示意数据。</p>
+              <Trend v-if="growthData" v-bind="growthData" />
+              <p v-else class="muted small">领养宝宝后显示模拟成长曲线。</p>
               <div class="row wrap">
                 <span
                   v-for="milestone in ['身体发育', '大动作', '精细动作', '语言', '认知社交']"

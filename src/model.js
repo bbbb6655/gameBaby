@@ -10,6 +10,27 @@ export const bands = [
 export const bandFor = (month) => bands.findIndex((band) => month >= band.from && month <= band.to)
 export const ageLabel = (month) =>
   month < 12 ? `${month} 月龄` : `${Math.floor(month / 12)} 岁${month % 12 ? ` ${month % 12} 个月` : ''}`
+
+export function demoGrowthSeries(age, metric) {
+  // 按当前月龄绘制原型示意曲线。
+  const height = metric === '身高'
+  const months = Array.from({ length: Math.min(age + 1, 5) }, (_, i) => Math.max(age - 4, 0) + i)
+  const values = months.map((month) => {
+    const value = height
+      ? 50 + 7.1 * Math.sqrt(month) + 0.16 * month
+      : 3.4 + 1.75 * Math.sqrt(month) + 0.03 * month
+    return Number(value.toFixed(1))
+  })
+  const margin = height ? 2 : 0.5
+  return {
+    labels: months.map((month) => `${month} 月`),
+    min: Math.floor(values[0] - margin),
+    max: Math.ceil(values.at(-1) + margin),
+    unit: height ? 'cm' : 'kg',
+    lines: [{ name: '模拟示意', color: '#43785a', values }],
+  }
+}
+
 export const policyFor = (school, className = school.classes[0]) =>
   school.policies?.[`class:${className}`] || school.policy
 

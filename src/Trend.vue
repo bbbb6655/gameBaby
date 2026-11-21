@@ -19,7 +19,7 @@ function paint() {
   el.height = height * dpi
   const ctx = el.getContext('2d')
   ctx.scale(dpi, dpi)
-  const left = 40,
+  const left = props.unit ? 52 : 40,
     top = 14,
     right = width - 16,
     bottom = height - 27

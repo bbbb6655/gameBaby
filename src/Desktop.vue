@@ -5,7 +5,7 @@ import AdminSearch from './AdminSearch.vue'
 import StateCards from './StateCards.vue'
 import Timeline from './Timeline.vue'
 import Trend from './Trend.vue'
-import { ageLabel, bands, cases, domains, events, knowledge, policyFor, portrait } from './model.js'
+import { ageLabel, bands, cases, demoGrowthSeries, domains, events, knowledge, policyFor, portrait } from './model.js'
 import { createStore } from './store.js'
 
 const props = defineProps({ accountState: Object, demoRole: String, demoAccount: String })
@@ -238,39 +238,9 @@ const keywords = computed(() => {
     .sort((a, b) => b[1] - a[1])
 })
 const growthMetric = ref('身高')
-const growthSeries = computed(() => {
-  const isHeight = growthMetric.value === '身高'
-  const end =
-    school.value.baby?.age >= 19
-      ? isHeight
-        ? 87
-        : 12
-      : school.value.baby?.age <= 3
-        ? isHeight
-          ? 56
-          : 5.5
-        : isHeight
-          ? 72
-          : 8.5
-  const step = isHeight ? 2 : 0.4
-  return {
-    labels: ['记录 1', '记录 2', '记录 3', '记录 4', '当前'],
-    min: Math.floor(end - step * 5),
-    max: Math.ceil(end + step * 2),
-    lines: [
-      {
-        name: '宝宝模拟',
-        color: '#34825a',
-        values: Array.from({ length: 5 }, (_, i) => end - (4 - i) * step),
-      },
-      {
-        name: '参考示意',
-        color: '#c79b57',
-        values: Array.from({ length: 5 }, (_, i) => end - (3.6 - i) * step),
-      },
-    ],
-  }
-})
+const growthSeries = computed(() =>
+  school.value.baby && demoGrowthSeries(school.value.baby.age, growthMetric.value),
+)
 const wrong = computed(() =>
   school.value.attempts.flatMap((item) => item.answers.filter((answer) => !answer.correct)),
 )
